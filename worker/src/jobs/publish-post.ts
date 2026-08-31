@@ -47,14 +47,27 @@ function partnerIdOf(row: EligibleRender): string | null {
   return sourceVideo?.partner_id ?? null;
 }
 
+// Front-load the strongest identifying phrase in caps — a scrolling
+// viewer typically only registers the first couple of words of a
+// Shorts title — plus one trailing high-energy emoji. See plan §11.
 function buildTitle(hookText: string | null): string {
-  const base = hookText?.trim() || "Backyard Breaks Clip";
-  return base.length > 90 ? `${base.slice(0, 87)}...` : base;
+  const base = (hookText?.trim() || "Backyard Breaks Clip").toUpperCase();
+  const capped = base.length > 90 ? `${base.slice(0, 87)}...` : base;
+  return `${capped} 🔥`;
 }
 
+// Static niche-keyword phrase in place of real per-clip keyword research
+// (that would need an LLM call per clip — deferred until there's
+// post_metrics data to justify the added cost, see plan §11). Hashtag
+// line is capped at 5 total, #shorts and #viralshorts leading, per the
+// "don't over-hashtag or YouTube reads it as spam" guidance.
+const NICHE_KEYWORDS = "trading card breaks, sports card unboxing, whatnot live break, card collecting";
+
 function buildDescription(caption: string | null, hashtags: string[] | null): string {
-  const tags = (hashtags ?? []).map((h) => `#${h.replace(/^#/, "")}`).join(" ");
-  return [caption?.trim(), tags, "#Shorts"].filter(Boolean).join("\n\n");
+  const openingLine = caption?.trim() || "Wait for it...";
+  const nicheTags = (hashtags ?? []).slice(0, 3).map((h) => `#${h.replace(/^#/, "")}`);
+  const hashtagLine = ["#shorts", "#viralshorts", ...nicheTags].join(" ");
+  return [openingLine, NICHE_KEYWORDS, hashtagLine].join("\n\n");
 }
 
 export interface PublishOptions {
@@ -157,7 +170,7 @@ export async function publishApprovedClips(options: PublishOptions = {}) {
       const { videoId, actualPrivacyStatus } = await uploadYoutubeVideo(videoBuffer, {
         title: buildTitle(render.hook_text),
         description: buildDescription(render.caption, render.hashtags),
-        tags: [...(render.hashtags ?? []), "Shorts"],
+        tags: ["shorts", "viral shorts", "Backyard Breaks", ...(render.hashtags ?? [])],
         categoryId: CATEGORY_ID,
         privacyStatus: PRIVACY_STATUS,
       });

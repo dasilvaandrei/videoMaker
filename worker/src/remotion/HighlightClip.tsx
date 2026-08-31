@@ -5,7 +5,7 @@
 // re-cut, per the campaign's own content rules and because it's simply
 // better-performing short-form content.
 
-import { AbsoluteFill, OffthreadVideo, useVideoConfig } from "remotion";
+import { AbsoluteFill, Freeze, OffthreadVideo, useCurrentFrame, useVideoConfig } from "remotion";
 import { loadFont as loadHookFont } from "@remotion/google-fonts/Anton";
 import { loadFont as loadBodyFont } from "@remotion/google-fonts/Inter";
 
@@ -20,10 +20,9 @@ export type HighlightClipProps = {
   hookText: string;
   caption: string;
   hashtags: string[];
-  // Unused by the component itself (duration is expressed via the
-  // Sequence/composition length Remotion derives from calculateMetadata
-  // in Root.tsx) — kept on the shared prop type so Composition's
-  // component/calculateMetadata generics line up.
+  // Marks where the real clip ends and the trailing freeze-frame (see
+  // FREEZE_FRAMES in Root.tsx) begins — the composition's total duration
+  // is longer than this by that fixed freeze padding.
   durationInSeconds: number;
 };
 
@@ -40,17 +39,26 @@ export const HighlightClip: React.FC<HighlightClipProps> = ({
   hookText,
   caption,
   hashtags,
+  durationInSeconds,
 }) => {
-  const { width, height } = useVideoConfig();
+  const { width, height, fps } = useVideoConfig();
+  const frame = useCurrentFrame();
   const isVertical = height > width;
   const baseHookSize = isVertical ? 76 : 54;
 
+  // Real clip plays normally up to this frame; past it we hold on the
+  // last real frame (the trailing FREEZE_FRAMES padding from Root.tsx's
+  // calculateMetadata) rather than showing a black/undefined frame.
+  const mainDurationInFrames = Math.round(durationInSeconds * fps);
+
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
-      <OffthreadVideo
-        src={videoSrc}
-        style={{ width: "100%", height: "100%", objectFit: "cover" }}
-      />
+      <Freeze frame={mainDurationInFrames - 1} active={frame >= mainDurationInFrames}>
+        <OffthreadVideo
+          src={videoSrc}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      </Freeze>
 
       {/* Scrim so white text stays readable over bright footage */}
       <AbsoluteFill

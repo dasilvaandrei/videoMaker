@@ -12,11 +12,18 @@ import { HighlightClip, type HighlightClipProps } from "./HighlightClip.js";
 
 const FPS = 30;
 
+// Extra hold on the last frame after the real clip ends. YouTube Shorts
+// auto-picks its thumbnail from the video itself (no custom-thumbnail
+// upload path via the Data API) — a deliberate freeze on a strong frame
+// means whatever it grabs near the end looks intentional, not mid-motion
+// blur. See HighlightClip.tsx for where the freeze is applied.
+const FREEZE_FRAMES = 15;
+
 type Props = HighlightClipProps;
 
 const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) => {
   return {
-    durationInFrames: Math.max(1, Math.round(props.durationInSeconds * FPS)),
+    durationInFrames: Math.max(1, Math.round(props.durationInSeconds * FPS)) + FREEZE_FRAMES,
   };
 };
 
