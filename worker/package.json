@@ -1,0 +1,35 @@
+{
+  "name": "@videomaker/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "discover-campaigns": "tsx src/jobs/discover-campaigns.ts",
+    "join-campaign": "tsx src/jobs/join-campaign.ts",
+    "ingest-campaign-source": "tsx src/jobs/ingest-campaign-source.ts",
+    "ingest-backyard-breaks": "tsx src/jobs/ingest-backyard-breaks.ts",
+    "generate-render-metadata": "tsx src/jobs/generate-render-metadata.ts",
+    "render-clips": "tsx src/jobs/render-clips.ts",
+    "youtube-oauth-bootstrap": "tsx src/jobs/youtube-oauth-bootstrap.ts",
+    "publish-post": "tsx src/jobs/publish-post.ts",
+    "remotion:studio": "remotion studio src/remotion/index.ts"
+  },
+  "dependencies": {
+    "@remotion/bundler": "^4.0.190",
+    "@remotion/google-fonts": "^4.0.190",
+    "@remotion/renderer": "^4.0.190",
+    "@supabase/supabase-js": "^2.45.0",
+    "csv-parse": "^5.6.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.190"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.190",
+    "@types/node": "^22.4.0",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

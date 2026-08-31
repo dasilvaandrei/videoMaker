@@ -1,0 +1,41 @@
+name: Scheduled YouTube publish
+
+# Posts the single highest-predicted-virality approved-and-unposted clip
+# to YouTube, twice a day. GitHub Actions cron is UTC-only and doesn't
+# shift for daylight saving, so these two lines are a fixed EST (UTC-5)
+# offset — during EDT (roughly March-November) actual post times drift an
+# hour later on the wall clock (9am/6pm ET instead of 8am/5pm). Adjust the
+# two cron lines by ±1 hour across the DST boundary if that hour matters,
+# or ask for a DST-aware version (needs an in-job time check instead of
+# relying on cron alone, since cron itself can't express "local time").
+on:
+  schedule:
+    - cron: "0 13 * * *" # 8:00 AM EST / 9:00 AM EDT
+    - cron: "0 22 * * *" # 5:00 PM EST / 6:00 PM EDT
+  workflow_dispatch: {} # manual trigger, e.g. to catch up after a gap
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Publish next clip to YouTube
+        working-directory: worker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          # Confirmed against the real account that public uploads are
+          # honored (not silently downgraded) before wiring this up —
+          # see the actualPrivacyStatus check in publish-post.ts.
+          YOUTUBE_UPLOAD_PRIVACY_STATUS: public
+        run: npm run publish-post -- --limit 1

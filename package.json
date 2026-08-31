@@ -1,0 +1,8 @@
+{
+  "name": "videomaker",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "worker"
+  ]
+}
