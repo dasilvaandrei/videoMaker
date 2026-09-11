@@ -25,8 +25,8 @@ export default async function ProtectedLayout({ children }: { children: React.Re
           <Link href="/review" className="hover:text-white">
             Review
           </Link>
-          <Link href="/sources" className="hover:text-white">
-            Sources
+          <Link href="/artists" className="hover:text-white">
+            Artists
           </Link>
         </nav>
         <form action={logout}>

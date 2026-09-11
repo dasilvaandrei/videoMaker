@@ -4,17 +4,25 @@ import { ReviewCard } from "./ReviewCard";
 const MEDIA_BUCKET = "media";
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 
+interface LineupEntry {
+  rank: number;
+  song_title: string;
+  metric_label: string | null;
+  note: string | null;
+}
+
 interface PendingReview {
-  clip_render_id: string;
+  ranking_video_id: string;
+  ranking_id: string;
   aspect_ratio: "9:16" | "1:1" | "16:9";
   storage_path: string | null;
-  hook_text: string | null;
+  title: string | null;
   caption: string | null;
   hashtags: string[] | null;
-  predicted_virality_score: number | null;
-  moment_type: string | null;
-  start_seconds: number;
-  end_seconds: number;
+  source: string;
+  period_label: string;
+  artist_name: string;
+  lineup: LineupEntry[] | null;
 }
 
 export default async function ReviewPage() {
@@ -23,9 +31,9 @@ export default async function ReviewPage() {
   const { data: pending, error } = await supabase
     .from("pending_reviews")
     .select(
-      "clip_render_id, aspect_ratio, storage_path, hook_text, caption, hashtags, predicted_virality_score, moment_type, start_seconds, end_seconds"
+      "ranking_video_id, ranking_id, aspect_ratio, storage_path, title, caption, hashtags, source, period_label, artist_name, lineup"
     )
-    .order("predicted_virality_score", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: true })
     .returns<PendingReview[]>();
 
   if (error) {
@@ -49,7 +57,7 @@ export default async function ReviewPage() {
       <div>
         <h1 className="text-xl font-semibold">Review queue</h1>
         <p className="text-sm text-neutral-400">
-          {rows.length} clip{rows.length === 1 ? "" : "s"} awaiting a decision
+          {rows.length} video{rows.length === 1 ? "" : "s"} awaiting a decision
         </p>
       </div>
 
@@ -59,7 +67,7 @@ export default async function ReviewPage() {
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {withUrls.map((row) => (
-          <ReviewCard key={row.clip_render_id} clip={row} />
+          <ReviewCard key={row.ranking_video_id} video={row} />
         ))}
       </div>
     </div>

@@ -1,0 +1,163 @@
+// Once every ranking_item in a draft ranking has a downloaded song_clip,
+// builds title/caption/hashtags (source-aware) and queues a
+// ranking_videos row. No LLM call — like the old campaign pipeline's
+// generate-render-metadata.ts, the cheapest option when the inputs
+// (artist, source, song lineup) are already enough to build good-enough
+// copy programmatically.
+
+import { loadArtistRoster } from "../config/artists.js";
+import { supabase } from "../lib/supabase.js";
+
+// Title text stays clean of source jargon ("Last.fm" means nothing to a
+// casual viewer) — the source is named in the caption instead. YouTube's
+// "Views" label is plain-English enough to keep in the title. Title Case
+// not all-caps is based on a real data point: pulling a working
+// countdown-ranking channel's upload history via the Data API showed its
+// highest-performing titles consistently follow "Ranking The Best X" in
+// Title Case, never all-caps.
+const SOURCE_TITLE_SUFFIX: Record<string, string> = {
+  youtube: " (YouTube Views)",
+};
+
+const SOURCE_CAPTION_LINE: Record<string, string> = {
+  lastfm: "Ranked by real Last.fm play counts.",
+  youtube: "Ranked by official YouTube view counts.",
+};
+
+const SOURCE_HASHTAGS: Record<string, string[]> = {
+  lastfm: ["lastfm", "topsongs", "musicranking"],
+  youtube: ["youtube", "mostviewed", "musicranking"],
+  personal: ["top5", "musicranking", "debate"],
+};
+
+// Automated rankings (Last.fm playcount / YouTube view count) only ever
+// see songs primarily credited to the artist — a feature/collab hit like
+// a Bzrp Music Session gets credited to the producer, not the featured
+// vocalist, so it silently never appears here even if it's the artist's
+// biggest song. Surfaced on-screen and in the caption rather than left
+// as a silent gap viewers would otherwise just call out in comments.
+const FEATURE_DISCLAIMER = "Primary artist credit only";
+
+// Generic fallback for any roster artist that doesn't have a hand-written
+// bio yet (see config/artists.ts) — never left blank, since the caption
+// always opens with an "about the artist" line now.
+const GENERIC_BIO = (artistName: string) =>
+  `${artistName} is a recording artist featured in this ranking. A fuller bio hasn't been written for them yet — see worker/src/config/artists.json.`;
+
+// Bottom-of-caption credit line, present on every video regardless of
+// source — the actual copyright-relevant statement: none of the music,
+// footage, or artwork is ours.
+const COPYRIGHT_CREDIT_LINE =
+  "All video clips, music, and artwork remain the property of their original artists, labels, and copyright holders.";
+
+function slug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function buildTitle(artistName: string, source: string): string {
+  if (source === "personal") {
+    return `Ranking My Top 5 ${artistName} Songs 🔥 (Agree?)`;
+  }
+  return `Ranking ${artistName}'s Top 5 Songs${SOURCE_TITLE_SUFFIX[source] ?? ""} 🔥`;
+}
+
+// Caption is now: about-the-artist blurb, then the ranking description,
+// then (bottom) where the ranking data and the video/song content are
+// credited from — the credit line is the actually copyright-relevant
+// part, so it stays last where captions conventionally put fine print.
+function buildCaption(artistName: string, bio: string, source: string, note: string | null): string {
+  if (source === "personal") {
+    const base = `My ranking of ${artistName}'s best songs — let me know if you'd flip any of these.`;
+    const middle = note ? `${base}\n\n${note}` : base;
+    return `${bio}\n\n${middle}\n\n${COPYRIGHT_CREDIT_LINE}`;
+  }
+  const sourceLine = SOURCE_CAPTION_LINE[source] ?? "";
+  return `${bio}\n\n${artistName}'s top 5 songs right now, ranked 5 to 1.\n\n${sourceLine}\n${FEATURE_DISCLAIMER}\n\n${COPYRIGHT_CREDIT_LINE}`;
+}
+
+interface DraftRanking {
+  id: string;
+  source: string;
+  note: string | null;
+  artists: { name: string } | { name: string }[] | null;
+}
+
+interface RankingItemCheck {
+  songs:
+    | { song_clips: { status: string } | { status: string }[] | null }
+    | { song_clips: { status: string } | { status: string }[] | null }[]
+    | null;
+}
+
+function oneOf<T>(value: T | T[] | null): T | null {
+  if (!value) return null;
+  return Array.isArray(value) ? value[0] ?? null : value;
+}
+
+function artistNameOf(ranking: DraftRanking): string {
+  return oneOf(ranking.artists)?.name ?? "";
+}
+
+export async function generateRankingRenderMetadata() {
+  const bioByArtistName = new Map(loadArtistRoster().map((a) => [a.name, a.bio]));
+
+  const { data: draftRankings, error } = await supabase
+    .from("rankings")
+    .select("id, source, note, artists(name)")
+    .eq("status", "draft")
+    .returns<DraftRanking[]>();
+  if (error) throw error;
+
+  for (const ranking of draftRankings ?? []) {
+    const { data: items, error: itemsError } = await supabase
+      .from("ranking_items")
+      .select("songs(song_clips(status))")
+      .eq("ranking_id", ranking.id)
+      .returns<RankingItemCheck[]>();
+    if (itemsError) throw itemsError;
+
+    if ((items ?? []).length < 5) continue;
+
+    const allDownloaded = (items ?? []).every((item) => {
+      const song = oneOf(item.songs);
+      const clip = song ? oneOf(song.song_clips) : null;
+      return clip?.status === "downloaded";
+    });
+    if (!allDownloaded) continue;
+
+    const artistName = artistNameOf(ranking);
+    const bio = bioByArtistName.get(artistName) || GENERIC_BIO(artistName);
+    const { data: video, error: insertError } = await supabase
+      .from("ranking_videos")
+      .insert({
+        ranking_id: ranking.id,
+        aspect_ratio: "9:16",
+        title: buildTitle(artistName, ranking.source),
+        caption: buildCaption(artistName, bio, ranking.source, ranking.note),
+        hashtags: [...SOURCE_HASHTAGS[ranking.source], slug(artistName), "shorts"],
+        render_status: "queued",
+      })
+      .select("id")
+      .single();
+    if (insertError) throw insertError;
+
+    // Flips the ranking out of the 'draft' query above, so re-running
+    // this job never double-queues a ranking_video for the same ranking.
+    const { error: rankingUpdateError } = await supabase
+      .from("rankings")
+      .update({ status: "ready" })
+      .eq("id", ranking.id);
+    if (rankingUpdateError) throw rankingUpdateError;
+
+    console.log(`${artistName}: queued ranking_video ${video.id} (${ranking.source})`);
+  }
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  generateRankingRenderMetadata()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+}

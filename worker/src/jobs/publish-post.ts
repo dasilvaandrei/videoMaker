@@ -1,15 +1,17 @@
-// Publishes approved/edited clip_renders to YouTube — the only platform
+// Publishes approved/edited ranking_videos to YouTube — the only platform
 // with working publish credentials right now (TikTok/Instagram accounts
 // are still being warmed up, see memory: publishing_accounts_status).
 //
 // Three invocation modes:
-//   npm run publish-post                      -> publishes every eligible clip
-//   npm run publish-post -- <clip_render_id>   -> publishes just one, by id
-//   npm run publish-post -- --limit N          -> publishes the top N eligible
-//                                                  clips by predicted virality
+//   npm run publish-post                      -> publishes every eligible video
+//   npm run publish-post -- <ranking_video_id> -> publishes just one, by id
+//   npm run publish-post -- --limit N          -> publishes the oldest N eligible
+//                                                  videos (no per-render virality
+//                                                  score for countdown videos —
+//                                                  see below)
 // --limit is what the scheduled GitHub Actions workflow uses (one run per
-// scheduled post) — always taking the strongest remaining content first
-// rather than oldest-first, per the plan's virality-first framing (§6).
+// scheduled post), kept at 1 post/day while the channel identity is
+// mid-pivot.
 //
 // privacyStatus defaults to "private" — YouTube has historically
 // restricted uploads from unaudited API projects to private regardless of
@@ -24,65 +26,32 @@ import { supabase } from "../lib/supabase.js";
 
 const MEDIA_BUCKET = "media";
 const SIGNED_URL_TTL_SECONDS = 60 * 10;
-const CATEGORY_ID = "17"; // Sports
+const CATEGORY_ID = "10"; // Music
 const PRIVACY_STATUS =
   (process.env.YOUTUBE_UPLOAD_PRIVACY_STATUS as "private" | "unlisted" | "public" | undefined) ?? "private";
 
-interface EligibleRender {
+interface EligibleVideo {
   id: string;
   storage_path: string | null;
-  hook_text: string | null;
+  title: string | null;
   caption: string | null;
   hashtags: string[] | null;
-  predicted_virality_score: number | null;
-  clips: {
-    source_videos: { partner_id: string } | { partner_id: string }[] | null;
-  } | null;
-}
-
-function partnerIdOf(row: EligibleRender): string | null {
-  const clip = row.clips;
-  if (!clip) return null;
-  const sourceVideo = Array.isArray(clip.source_videos) ? clip.source_videos[0] : clip.source_videos;
-  return sourceVideo?.partner_id ?? null;
-}
-
-// Front-load the strongest identifying phrase in caps — a scrolling
-// viewer typically only registers the first couple of words of a
-// Shorts title — plus one trailing high-energy emoji. See plan §11.
-function buildTitle(hookText: string | null): string {
-  const base = (hookText?.trim() || "Backyard Breaks Clip").toUpperCase();
-  const capped = base.length > 90 ? `${base.slice(0, 87)}...` : base;
-  return `${capped} 🔥`;
-}
-
-// Static niche-keyword phrase in place of real per-clip keyword research
-// (that would need an LLM call per clip — deferred until there's
-// post_metrics data to justify the added cost, see plan §11). Hashtag
-// line is capped at 5 total, #shorts and #viralshorts leading, per the
-// "don't over-hashtag or YouTube reads it as spam" guidance.
-const NICHE_KEYWORDS = "trading card breaks, sports card unboxing, whatnot live break, card collecting";
-
-function buildDescription(caption: string | null, hashtags: string[] | null): string {
-  const openingLine = caption?.trim() || "Wait for it...";
-  const nicheTags = (hashtags ?? []).slice(0, 3).map((h) => `#${h.replace(/^#/, "")}`);
-  const hashtagLine = ["#shorts", "#viralshorts", ...nicheTags].join(" ");
-  return [openingLine, NICHE_KEYWORDS, hashtagLine].join("\n\n");
+  created_at: string;
 }
 
 export interface PublishOptions {
-  onlyClipRenderId?: string;
+  onlyRankingVideoId?: string;
   limit?: number;
 }
 
 export async function publishApprovedClips(options: PublishOptions = {}) {
-  const { onlyClipRenderId, limit } = options;
+  const { onlyRankingVideoId, limit } = options;
   const { data: decisions, error: decisionsError } = await supabase
     .from("review_decisions")
-    .select("clip_render_id")
+    .select("ranking_video_id")
     .in("decision", ["approved", "edited"]);
   if (decisionsError) throw decisionsError;
-  const approvedIds = new Set((decisions ?? []).map((d) => d.clip_render_id as string));
+  const approvedIds = new Set((decisions ?? []).map((d) => d.ranking_video_id as string));
 
   const { data: platformRow, error: platformError } = await supabase
     .from("platforms")
@@ -91,66 +60,58 @@ export async function publishApprovedClips(options: PublishOptions = {}) {
     .single();
   if (platformError) throw platformError;
 
-  const { data: accounts, error: accountsError } = await supabase
+  // We own the channel outright now (no clip-reward partners to route
+  // between) — there's exactly one youtube platform_account.
+  const { data: account, error: accountError } = await supabase
     .from("platform_accounts")
-    .select("id, partner_id")
-    .eq("platform_id", platformRow.id);
-  if (accountsError) throw accountsError;
-  const accountByPartner = new Map((accounts ?? []).map((a) => [a.partner_id as string, a.id as string]));
-  const accountIds = (accounts ?? []).map((a) => a.id as string);
+    .select("id")
+    .eq("platform_id", platformRow.id)
+    .single();
+  if (accountError) throw accountError;
 
   // Only 'published' counts as done — a 'failed' row (from a previous
   // attempt) should be retried, not permanently skipped.
   const { data: existingPosts, error: postsError } = await supabase
     .from("posts")
-    .select("clip_render_id")
-    .in("platform_account_id", accountIds)
+    .select("ranking_video_id")
+    .eq("platform_account_id", account.id)
     .eq("status", "published");
   if (postsError) throw postsError;
-  const postedIds = new Set((existingPosts ?? []).map((p) => p.clip_render_id as string));
+  const postedIds = new Set((existingPosts ?? []).map((p) => p.ranking_video_id as string));
 
-  const { data: renders, error: rendersError } = await supabase
-    .from("clip_renders")
-    .select(
-      "id, storage_path, hook_text, caption, hashtags, predicted_virality_score, clips(source_videos(partner_id))"
-    )
+  const { data: videos, error: videosError } = await supabase
+    .from("ranking_videos")
+    .select("id, storage_path, title, caption, hashtags, created_at")
     .eq("render_status", "ready")
-    .order("predicted_virality_score", { ascending: false, nullsFirst: false })
-    .returns<EligibleRender[]>();
-  if (rendersError) throw rendersError;
+    .order("created_at", { ascending: true })
+    .returns<EligibleVideo[]>();
+  if (videosError) throw videosError;
 
-  let eligible = (renders ?? []).filter(
-    (r) => approvedIds.has(r.id) && !postedIds.has(r.id) && r.storage_path
+  let eligible = (videos ?? []).filter(
+    (v) => approvedIds.has(v.id) && !postedIds.has(v.id) && v.storage_path
   );
 
-  if (onlyClipRenderId) {
-    eligible = eligible.filter((r) => r.id === onlyClipRenderId);
+  if (onlyRankingVideoId) {
+    eligible = eligible.filter((v) => v.id === onlyRankingVideoId);
     if (eligible.length === 0) {
       throw new Error(
-        `clip_render ${onlyClipRenderId} isn't eligible — not approved/edited yet, already published, or not render_status='ready'`
+        `ranking_video ${onlyRankingVideoId} isn't eligible — not approved/edited yet, already published, or not render_status='ready'`
       );
     }
   } else if (limit != null) {
     eligible = eligible.slice(0, limit);
   }
 
-  console.log(`${eligible.length} clip(s) eligible for YouTube publish (privacyStatus=${PRIVACY_STATUS})`);
+  console.log(`${eligible.length} ranking video(s) eligible for YouTube publish (privacyStatus=${PRIVACY_STATUS})`);
 
-  for (const render of eligible) {
-    const partnerId = partnerIdOf(render);
-    const platformAccountId = partnerId ? accountByPartner.get(partnerId) : undefined;
-    if (!platformAccountId) {
-      console.warn(`skip ${render.id}: no youtube platform_account for partner ${partnerId}`);
-      continue;
-    }
-
+  for (const video of eligible) {
     const { data: post, error: insertError } = await supabase
       .from("posts")
       .insert({
-        clip_render_id: render.id,
-        platform_account_id: platformAccountId,
-        caption: render.caption,
-        hashtags: render.hashtags ?? [],
+        ranking_video_id: video.id,
+        platform_account_id: account.id,
+        caption: video.caption,
+        hashtags: video.hashtags ?? [],
         status: "publishing",
       })
       .select("id")
@@ -160,17 +121,21 @@ export async function publishApprovedClips(options: PublishOptions = {}) {
     try {
       const { data: signed, error: signError } = await supabase.storage
         .from(MEDIA_BUCKET)
-        .createSignedUrl(render.storage_path!, SIGNED_URL_TTL_SECONDS);
+        .createSignedUrl(video.storage_path!, SIGNED_URL_TTL_SECONDS);
       if (signError) throw signError;
 
       const videoRes = await fetch(signed.signedUrl);
-      if (!videoRes.ok) throw new Error(`failed to fetch rendered clip: ${videoRes.status}`);
+      if (!videoRes.ok) throw new Error(`failed to fetch rendered video: ${videoRes.status}`);
       const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
 
+      const description = [video.caption, (video.hashtags ?? []).map((h) => `#${h.replace(/^#/, "")}`).join(" ")]
+        .filter(Boolean)
+        .join("\n\n");
+
       const { videoId, actualPrivacyStatus } = await uploadYoutubeVideo(videoBuffer, {
-        title: buildTitle(render.hook_text),
-        description: buildDescription(render.caption, render.hashtags),
-        tags: ["shorts", "viral shorts", "Backyard Breaks", ...(render.hashtags ?? [])],
+        title: video.title ?? "Top 5 Songs",
+        description,
+        tags: ["shorts", "musicranking", "topsongs", ...(video.hashtags ?? [])],
         categoryId: CATEGORY_ID,
         privacyStatus: PRIVACY_STATUS,
       });
@@ -186,7 +151,7 @@ export async function publishApprovedClips(options: PublishOptions = {}) {
       if (updateError) throw updateError;
 
       console.log(
-        `published ${render.id} -> https://youtube.com/watch?v=${videoId} (actual privacyStatus=${actualPrivacyStatus})`
+        `published ${video.id} -> https://youtube.com/watch?v=${videoId} (actual privacyStatus=${actualPrivacyStatus})`
       );
       if (actualPrivacyStatus !== PRIVACY_STATUS) {
         console.warn(
@@ -195,8 +160,8 @@ export async function publishApprovedClips(options: PublishOptions = {}) {
       }
     } catch (err) {
       // One bad upload (quota, transient network error) shouldn't take
-      // down the rest of the batch — mirrors render-clips.ts.
-      console.error(`publish ${render.id} failed:`, err instanceof Error ? err.message : err);
+      // down the rest of the batch — mirrors render-ranking-videos.ts.
+      console.error(`publish ${video.id} failed:`, err instanceof Error ? err.message : err);
       await supabase
         .from("posts")
         .update({ status: "failed", error_message: err instanceof Error ? err.message : String(err) })
@@ -214,7 +179,7 @@ function parseArgs(argv: string[]): PublishOptions {
     return { limit };
   }
   if (argv[0]) {
-    return { onlyClipRenderId: argv[0] };
+    return { onlyRankingVideoId: argv[0] };
   }
   return {};
 }

@@ -1,0 +1,62 @@
+name: Daily ranking video pipeline
+
+# Fully automated, once a day: picks one (artist, source) pair from
+# worker/src/config/artists.json (see run-daily-pipeline.ts for the
+# rotation logic), fetches its ranking, resolves + downloads clips,
+# renders the countdown video, auto-approves it, and publishes to
+# YouTube — no human review step, by explicit choice (see
+# run-daily-pipeline.ts's comment for how to add a review gate back).
+#
+# GitHub Actions cron is UTC-only and doesn't shift for daylight saving,
+# so this is a fixed EST (UTC-5) offset — during EDT (roughly
+# March-November) the actual run time drifts an hour later on the wall
+# clock (4pm ET instead of 3pm). Adjust the cron line by ±1 hour across
+# the DST boundary if that hour matters.
+on:
+  schedule:
+    - cron: "0 20 * * *" # 3:00 PM EST / 4:00 PM EDT
+  workflow_dispatch: {} # manual trigger, e.g. to catch up after a gap
+
+jobs:
+  daily-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      # Chrome Headless Shell's Linux dependencies, per Remotion's own
+      # docs (remotion.dev/docs/miscellaneous/linux-dependencies) — the
+      # render step needs these even though Remotion downloads/manages
+      # the browser binary itself.
+      - name: Install Chromium dependencies for Remotion
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 libdbus-1-3 libatk1.0-0 libasound2t64 libxrandr2 \
+            libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 \
+            libgbm-dev libcups2 libcairo2 libpango-1.0-0 libatk-bridge2.0-0 \
+            ffmpeg
+
+      - name: Install yt-dlp
+        run: pip install -U yt-dlp
+
+      - name: Run daily pipeline
+        working-directory: worker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          # Confirmed against the real account that public uploads are
+          # honored (not silently downgraded) before wiring this up —
+          # see the actualPrivacyStatus check in publish-post.ts.
+          YOUTUBE_UPLOAD_PRIVACY_STATUS: public
+        run: npm run run-daily-pipeline

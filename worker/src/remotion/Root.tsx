@@ -1,72 +1,103 @@
 // Registers one composition per aspect ratio the platforms need — 9:16
-// (TikTok/Reels/Shorts, the primary target for Backyard Breaks), 1:1, and
-// 16:9 — all backed by the same HighlightClip component. Duration comes
-// straight from the clip's already-known start/end_seconds (no re-probing
-// the video here, calculateMetadata below just does the seconds->frames
-// math) since that's cheaper and this runs inside Remotion's bundled
-// render context, not our Node worker process.
+// (TikTok/Reels/Shorts, the primary target), 1:1, and 16:9 — all backed
+// by the same RankingCountdown component. Duration is just the 5
+// segments' clip lengths (the video starts immediately on song #5, no
+// separate intro scene), plus a bit of extra trailing freeze on the
+// final (#1) segment only, for a clean YouTube auto-thumbnail.
 
 import type { CalculateMetadataFunction } from "remotion";
 import { Composition, Folder } from "remotion";
-import { HighlightClip, type HighlightClipProps } from "./HighlightClip.js";
+import { RankingCountdown, segmentDurationInSeconds, type RankingCountdownProps } from "./RankingCountdown.js";
+import { ChannelIcon } from "./ChannelIcon.js";
+import { ChannelBanner } from "./ChannelBanner.js";
 
 const FPS = 30;
 
-// Extra hold on the last frame after the real clip ends. YouTube Shorts
+// Extra hold on the last frame after the final clip ends. YouTube Shorts
 // auto-picks its thumbnail from the video itself (no custom-thumbnail
-// upload path via the Data API) — a deliberate freeze on a strong frame
-// means whatever it grabs near the end looks intentional, not mid-motion
-// blur. See HighlightClip.tsx for where the freeze is applied.
+// upload path via the Data API) — a deliberate freeze on a strong #1
+// frame means whatever it grabs near the end looks intentional, not
+// mid-motion blur. See RankingCountdown.tsx for where the freeze is
+// applied.
 const FREEZE_FRAMES = 15;
 
-type Props = HighlightClipProps;
+type Props = RankingCountdownProps;
 
+// Note: rank 2's segment.durationInSeconds already includes
+// FOLLOW_POPUP_SECONDS (set by render-ranking-videos.ts) — the popup
+// overlays on top of #2's own extended clip rather than adding a
+// separate scene, so no extra accounting is needed here.
 const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) => {
+  const segmentFrames = props.segments.reduce((sum, segment, index) => {
+    const isLast = index === props.segments.length - 1;
+    return sum + Math.round(segmentDurationInSeconds(segment) * FPS) + (isLast ? FREEZE_FRAMES : 0);
+  }, 0);
   return {
-    durationInFrames: Math.max(1, Math.round(props.durationInSeconds * FPS)) + FREEZE_FRAMES,
+    durationInFrames: Math.max(1, segmentFrames),
   };
 };
 
 const defaultProps: Props = {
-  videoSrc: "",
-  hookText: "Hook text",
-  caption: "Caption goes here",
-  hashtags: ["backyardbreaks"],
-  durationInSeconds: 5,
+  artistName: "Artist Name",
+  sourceBadge: "LAST.FM",
+  disclaimer: "Primary artist credit only — features not included",
+  segments: [5, 4, 3, 2, 1].map((rank) => ({
+    videoSrc: "",
+    rank,
+    songTitle: `Song #${rank}`,
+    metricLabel: null,
+    durationInSeconds: 7.5,
+  })),
 };
 
 export const RemotionRoot: React.FC = () => {
   return (
-    <Folder name="HighlightClip">
+    <Folder name="RankingCountdown">
       <Composition
-        id="HighlightClip-9x16"
-        component={HighlightClip}
+        id="RankingCountdown-9x16"
+        component={RankingCountdown}
         fps={FPS}
         width={1080}
         height={1920}
-        durationInFrames={FPS * 5}
+        durationInFrames={FPS * 30}
         defaultProps={defaultProps}
         calculateMetadata={calculateMetadata}
       />
       <Composition
-        id="HighlightClip-1x1"
-        component={HighlightClip}
+        id="RankingCountdown-1x1"
+        component={RankingCountdown}
         fps={FPS}
         width={1080}
         height={1080}
-        durationInFrames={FPS * 5}
+        durationInFrames={FPS * 30}
         defaultProps={defaultProps}
         calculateMetadata={calculateMetadata}
       />
       <Composition
-        id="HighlightClip-16x9"
-        component={HighlightClip}
+        id="RankingCountdown-16x9"
+        component={RankingCountdown}
         fps={FPS}
         width={1920}
         height={1080}
-        durationInFrames={FPS * 5}
+        durationInFrames={FPS * 30}
         defaultProps={defaultProps}
         calculateMetadata={calculateMetadata}
+      />
+      <Composition
+        id="ChannelIcon"
+        component={ChannelIcon}
+        fps={FPS}
+        width={800}
+        height={800}
+        durationInFrames={1}
+      />
+      <Composition
+        id="ChannelBanner"
+        component={ChannelBanner}
+        fps={FPS}
+        width={2560}
+        height={1440}
+        durationInFrames={1}
       />
     </Folder>
   );

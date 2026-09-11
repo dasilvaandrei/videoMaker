@@ -3,24 +3,36 @@
 import { useState, useTransition } from "react";
 import { approveClip, editAndApproveClip, rejectClip } from "./actions";
 
-interface ReviewClip {
-  clip_render_id: string;
+interface LineupEntry {
+  rank: number;
+  song_title: string;
+  metric_label: string | null;
+  note: string | null;
+}
+
+interface ReviewVideo {
+  ranking_video_id: string;
   aspect_ratio: "9:16" | "1:1" | "16:9";
-  hook_text: string | null;
+  title: string | null;
   caption: string | null;
   hashtags: string[] | null;
-  predicted_virality_score: number | null;
-  moment_type: string | null;
-  start_seconds: number;
-  end_seconds: number;
+  source: string;
+  artist_name: string;
+  lineup: LineupEntry[] | null;
   videoUrl: string | null;
 }
 
-export function ReviewCard({ clip }: { clip: ReviewClip }) {
+const SOURCE_LABEL: Record<string, string> = {
+  lastfm: "Last.fm",
+  youtube: "YouTube",
+  personal: "My picks",
+};
+
+export function ReviewCard({ video }: { video: ReviewVideo }) {
   const [isPending, startTransition] = useTransition();
   const [mode, setMode] = useState<"view" | "edit" | "reject">("view");
-  const [caption, setCaption] = useState(clip.caption ?? "");
-  const [hashtags, setHashtags] = useState((clip.hashtags ?? []).join(" "));
+  const [caption, setCaption] = useState(video.caption ?? "");
+  const [hashtags, setHashtags] = useState((video.hashtags ?? []).join(" "));
   const [rejectNotes, setRejectNotes] = useState("");
   const [done, setDone] = useState(false);
 
@@ -32,13 +44,11 @@ export function ReviewCard({ clip }: { clip: ReviewClip }) {
     );
   }
 
-  const duration = Math.round(clip.end_seconds - clip.start_seconds);
-
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
-      {clip.videoUrl ? (
+      {video.videoUrl ? (
         <video
-          src={clip.videoUrl}
+          src={video.videoUrl}
           controls
           preload="metadata"
           className="aspect-[9/16] w-full bg-black object-contain"
@@ -51,13 +61,25 @@ export function ReviewCard({ clip }: { clip: ReviewClip }) {
 
       <div className="space-y-2 p-4 text-sm">
         <div className="flex items-center justify-between text-xs text-neutral-500">
-          <span>{duration}s</span>
-          {clip.predicted_virality_score != null && (
-            <span>virality {clip.predicted_virality_score}</span>
-          )}
+          <span>{video.artist_name}</span>
+          <span>{SOURCE_LABEL[video.source] ?? video.source}</span>
         </div>
 
-        <p className="font-medium text-neutral-100">{clip.moment_type ?? clip.hook_text}</p>
+        <p className="font-medium text-neutral-100">{video.title}</p>
+
+        <ol className="space-y-1 text-xs text-neutral-400">
+          {(video.lineup ?? [])
+            .slice()
+            .sort((a, b) => a.rank - b.rank)
+            .map((entry) => (
+              <li key={entry.rank} className="flex justify-between gap-2">
+                <span>
+                  #{entry.rank} {entry.song_title}
+                </span>
+                <span className="text-neutral-500">{entry.metric_label ?? entry.note ?? ""}</span>
+              </li>
+            ))}
+        </ol>
 
         {mode === "edit" ? (
           <div className="space-y-2">
@@ -75,7 +97,7 @@ export function ReviewCard({ clip }: { clip: ReviewClip }) {
             />
           </div>
         ) : (
-          <p className="text-neutral-400">{clip.caption}</p>
+          <p className="text-neutral-400">{video.caption}</p>
         )}
 
         {mode === "reject" && (
@@ -95,7 +117,7 @@ export function ReviewCard({ clip }: { clip: ReviewClip }) {
                 disabled={isPending}
                 onClick={() =>
                   startTransition(async () => {
-                    await approveClip(clip.clip_render_id);
+                    await approveClip(video.ranking_video_id);
                     setDone(true);
                   })
                 }
@@ -130,7 +152,7 @@ export function ReviewCard({ clip }: { clip: ReviewClip }) {
                       .split(/\s+/)
                       .map((h) => h.replace(/^#/, "").trim())
                       .filter(Boolean);
-                    await editAndApproveClip(clip.clip_render_id, caption, parsedHashtags);
+                    await editAndApproveClip(video.ranking_video_id, caption, parsedHashtags);
                     setDone(true);
                   })
                 }
@@ -154,7 +176,7 @@ export function ReviewCard({ clip }: { clip: ReviewClip }) {
                 disabled={isPending}
                 onClick={() =>
                   startTransition(async () => {
-                    await rejectClip(clip.clip_render_id, rejectNotes);
+                    await rejectClip(video.ranking_video_id, rejectNotes);
                     setDone(true);
                   })
                 }

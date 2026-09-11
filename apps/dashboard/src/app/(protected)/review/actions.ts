@@ -12,12 +12,12 @@ async function currentUserId(): Promise<string> {
   return user.id;
 }
 
-export async function approveClip(clipRenderId: string) {
+export async function approveClip(rankingVideoId: string) {
   const supabase = await createClient();
   const reviewerId = await currentUserId();
 
   const { error } = await supabase.from("review_decisions").insert({
-    clip_render_id: clipRenderId,
+    ranking_video_id: rankingVideoId,
     reviewer_id: reviewerId,
     decision: "approved",
   });
@@ -26,12 +26,12 @@ export async function approveClip(clipRenderId: string) {
   revalidatePath("/review");
 }
 
-export async function rejectClip(clipRenderId: string, notes: string) {
+export async function rejectClip(rankingVideoId: string, notes: string) {
   const supabase = await createClient();
   const reviewerId = await currentUserId();
 
   const { error } = await supabase.from("review_decisions").insert({
-    clip_render_id: clipRenderId,
+    ranking_video_id: rankingVideoId,
     reviewer_id: reviewerId,
     decision: "rejected",
     notes: notes || null,
@@ -42,11 +42,11 @@ export async function rejectClip(clipRenderId: string, notes: string) {
 }
 
 // Records a substantive edit rather than a clean approval — this is what
-// source_review_stats.edit_rate measures for autonomy graduation (plan §3).
-// Still satisfies the posts-gate trigger (both 'approved' and 'edited' do)
+// ranking_review_stats.edit_rate measures per ranking source. Still
+// satisfies the posts-gate trigger (both 'approved' and 'edited' do)
 // since the human is still saying "post this," just as-edited.
 export async function editAndApproveClip(
-  clipRenderId: string,
+  rankingVideoId: string,
   editedCaption: string,
   editedHashtags: string[]
 ) {
@@ -54,7 +54,7 @@ export async function editAndApproveClip(
   const reviewerId = await currentUserId();
 
   const { error } = await supabase.from("review_decisions").insert({
-    clip_render_id: clipRenderId,
+    ranking_video_id: rankingVideoId,
     reviewer_id: reviewerId,
     decision: "edited",
     edited_caption: editedCaption,
