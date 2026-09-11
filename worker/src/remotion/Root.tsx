@@ -40,7 +40,15 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) =>
 const defaultProps: Props = {
   artistName: "Artist Name",
   sourceBadge: "LAST.FM",
-  disclaimer: "Primary artist credit only — features not included",
+  // Kept in sync with generate-ranking-render-metadata.ts's FEATURE_DISCLAIMER
+  // — this used to say something different ("...— features not included")
+  // and, because render-ranking-videos.ts was passing `undefined` (dropped
+  // during JSON serialization, which makes Remotion fall back to this
+  // exact default) instead of `null` for personal rankings, that stale
+  // text was leaking onto real personal-ranking videos. Fixed at the
+  // source now, but keeping this accurate too so a Studio preview never
+  // shows something the real pipeline wouldn't.
+  disclaimer: "Primary artist credit only",
   segments: [5, 4, 3, 2, 1].map((rank) => ({
     videoSrc: "",
     rank,

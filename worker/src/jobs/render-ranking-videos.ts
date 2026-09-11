@@ -183,7 +183,16 @@ export async function renderRankingVideos() {
           {
             artistName,
             sourceBadge: SOURCE_BADGE[ranking.source] ?? ranking.source.toUpperCase(),
-            disclaimer: ranking.source === "personal" ? undefined : FEATURE_DISCLAIMER,
+            // null, not undefined — Remotion's inputProps get JSON-serialized
+            // to reach the render process, and `undefined` fields are
+            // dropped in that process, which makes the key look "missing"
+            // rather than explicitly empty. Remotion then silently fills
+            // missing keys back in from the Composition's defaultProps
+            // (Root.tsx), which is exactly how a stale placeholder
+            // disclaimer leaked onto a real personal-ranking video once
+            // already. null survives JSON and reads as falsy in the
+            // Header's {disclaimer && ...} check, so it actually suppresses.
+            disclaimer: ranking.source === "personal" ? null : FEATURE_DISCLAIMER,
             sfxSrc: sfxSigned.signedUrl,
             segments,
           },

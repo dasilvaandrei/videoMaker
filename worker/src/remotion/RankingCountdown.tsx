@@ -49,7 +49,7 @@ export type RankingCountdownProps = {
   // miss their biggest feature/collab hits (e.g. a Bzrp Music Session
   // credited to the producer, not the featured vocalist). Personal
   // rankings have no need for this.
-  disclaimer?: string;
+  disclaimer?: string | null;
   // Short "ding" sound played at the start of every segment (the
   // scoreboard's rank-advance pattern interrupt). Optional so the
   // composition still works without it (e.g. Studio preview).
@@ -122,7 +122,7 @@ const HEADER_COLORS = ["#FF3B30", "#34C759", "#FFCC00", "#2E9BFF"];
 
 // Persistent header, shown for the whole video (not a separate intro
 // scene) — the video starts immediately on song #5.
-const Header: React.FC<{ artistName: string; sourceBadge: string; disclaimer?: string }> = ({
+const Header: React.FC<{ artistName: string; sourceBadge: string; disclaimer?: string | null }> = ({
   artistName,
   sourceBadge,
   disclaimer,
@@ -285,7 +285,7 @@ const RankingSegment: React.FC<
     sfxSrc?: string;
     artistName: string;
     sourceBadge: string;
-    disclaimer?: string;
+    disclaimer?: string | null;
     holdLastFrame: boolean;
     allSegments: RankingSegmentData[];
   }
