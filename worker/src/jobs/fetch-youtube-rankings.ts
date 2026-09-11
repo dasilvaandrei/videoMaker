@@ -9,7 +9,7 @@
 // non-song content keeps showing up in generated rankings.
 
 import { loadArtistRoster } from "../config/artists.js";
-import { getChannelVideoIds, getVideosInfo } from "../lib/youtube.js";
+import { getChannelVideoIds, getVideosInfo, searchOfficialChannel } from "../lib/youtube.js";
 import { supabase } from "../lib/supabase.js";
 
 const EXCLUDED_TITLE_PATTERN = /\b(interview|reaction|live stream|livestream|shorts|behind the scenes)\b/i;
@@ -21,23 +21,38 @@ function todayLabel(): string {
 
 // See fetch-lastfm-rankings.ts's onlyArtistNames for why this exists.
 export async function fetchYoutubeRankings(onlyArtistNames?: string[]) {
-  const roster = loadArtistRoster().filter(
-    (a) => a.youtubeChannelId && (!onlyArtistNames || onlyArtistNames.includes(a.name))
-  );
+  const roster = loadArtistRoster().filter((a) => !onlyArtistNames || onlyArtistNames.includes(a.name));
   const periodLabel = todayLabel();
 
   for (const artistConfig of roster) {
+    // Upsert with just the name — if a channel id was already resolved
+    // (either hand-verified in config, or cached here on a previous run),
+    // the select below reads it back from the existing row untouched.
     const { data: artist, error: artistError } = await supabase
       .from("artists")
-      .upsert(
-        { name: artistConfig.name, youtube_channel_id: artistConfig.youtubeChannelId },
-        { onConflict: "name" }
-      )
-      .select("id")
+      .upsert({ name: artistConfig.name }, { onConflict: "name" })
+      .select("id, youtube_channel_id")
       .single();
     if (artistError) throw artistError;
 
-    const videoIds = await getChannelVideoIds(artistConfig.youtubeChannelId!, 50);
+    let channelId = artistConfig.youtubeChannelId || artist.youtube_channel_id;
+    if (!channelId) {
+      // Most of the roster (see jobs/expand-artist-roster.ts) has no
+      // pre-verified channel — resolve it live and cache the result so
+      // this search only ever runs once per artist, not once per day.
+      channelId = await searchOfficialChannel(artistConfig.name);
+      if (!channelId) {
+        console.warn(`${artistConfig.name}: no YouTube channel found, skipping`);
+        continue;
+      }
+      const { error: cacheError } = await supabase
+        .from("artists")
+        .update({ youtube_channel_id: channelId })
+        .eq("id", artist.id);
+      if (cacheError) throw cacheError;
+    }
+
+    const videoIds = await getChannelVideoIds(channelId, 50);
     const videos = await getVideosInfo(videoIds);
     const top5 = videos
       .filter((v) => v.durationSeconds >= MIN_DURATION_SECONDS && !EXCLUDED_TITLE_PATTERN.test(v.title))

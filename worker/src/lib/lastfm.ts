@@ -14,6 +14,35 @@ export interface LastfmTopTrack {
   durationSeconds: number | null;
 }
 
+// Real, ranked-by-popularity artist names for a genre tag — used to
+// build the roster from actual Last.fm chart data rather than a
+// hand-typed list (which doesn't scale past a few dozen artists we can
+// personally verify, and risks naming artists we don't actually know
+// well for niche genres).
+export async function getTopArtistsByTag(tag: string, page: number, limit = 50): Promise<string[]> {
+  const apiKey = process.env.LASTFM_API_KEY;
+  if (!apiKey) throw new Error("LASTFM_API_KEY must be set");
+
+  const url = new URL(API_BASE);
+  url.search = new URLSearchParams({
+    method: "tag.gettopartists",
+    tag,
+    api_key: apiKey,
+    format: "json",
+    limit: String(limit),
+    page: String(page),
+  }).toString();
+
+  const res = await fetch(url);
+  const body = await res.json();
+  if (!res.ok || body.error) {
+    throw new Error(`Last.fm tag.getTopArtists failed for ${JSON.stringify(tag)} page ${page}: ${res.status} ${JSON.stringify(body)}`);
+  }
+
+  const artists = (body.topartists?.artist ?? []) as Array<{ name: string }>;
+  return artists.map((a) => a.name);
+}
+
 export async function getArtistTopTracks(artistName: string, limit = 5): Promise<LastfmTopTrack[]> {
   const apiKey = process.env.LASTFM_API_KEY;
   if (!apiKey) throw new Error("LASTFM_API_KEY must be set");

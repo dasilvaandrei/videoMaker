@@ -13,6 +13,7 @@
     "render-ranking-videos": "tsx src/jobs/render-ranking-videos.ts",
     "run-daily-pipeline": "tsx src/jobs/run-daily-pipeline.ts",
     "render-channel-branding": "tsx src/jobs/render-channel-branding.ts",
+    "expand-artist-roster": "tsx src/jobs/expand-artist-roster.ts",
     "youtube-oauth-bootstrap": "tsx src/jobs/youtube-oauth-bootstrap.ts",
     "publish-post": "tsx src/jobs/publish-post.ts",
     "remotion:studio": "remotion studio src/remotion/index.ts"

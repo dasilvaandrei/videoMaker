@@ -50,6 +50,30 @@ export async function searchOfficialVideo(query: string): Promise<string | null>
   return body.items?.[0]?.id?.videoId ?? null;
 }
 
+// For roster artists without a pre-verified youtubeChannelId (the roster
+// is now populated at a scale — see jobs/expand-artist-roster.ts — where
+// hand-verifying every channel isn't feasible). This is a best-effort
+// heuristic, same risk profile as searchOfficialVideo above: it can pick
+// a fan channel or a "- Topic" auto-generated channel instead of the
+// artist's real one. fetch-youtube-rankings.ts caches whatever it finds
+// into artists.youtube_channel_id so this only runs once per artist, not
+// once per day.
+export async function searchOfficialChannel(artistName: string): Promise<string | null> {
+  const url = new URL(`${DATA_API_BASE}/search`);
+  url.search = new URLSearchParams({
+    key: apiKey(),
+    q: artistName,
+    part: "snippet",
+    type: "channel",
+    maxResults: "1",
+  }).toString();
+
+  const res = await fetch(url);
+  const body = await res.json();
+  if (!res.ok) throw new Error(`YouTube channel search failed for ${JSON.stringify(artistName)}: ${res.status} ${JSON.stringify(body)}`);
+  return body.items?.[0]?.snippet?.channelId ?? null;
+}
+
 export async function getVideosInfo(videoIds: string[]): Promise<YoutubeVideoInfo[]> {
   if (videoIds.length === 0) return [];
   const results: YoutubeVideoInfo[] = [];
