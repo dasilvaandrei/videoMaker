@@ -6,6 +6,7 @@
 // copy programmatically.
 
 import { loadArtistRoster } from "../config/artists.js";
+import { generateText } from "../lib/anthropic.js";
 import { supabase } from "../lib/supabase.js";
 
 // Title text stays clean of source jargon ("Last.fm" means nothing to a
@@ -38,11 +39,49 @@ const SOURCE_HASHTAGS: Record<string, string[]> = {
 // as a silent gap viewers would otherwise just call out in comments.
 const FEATURE_DISCLAIMER = "Primary artist credit only";
 
-// Generic fallback for any roster artist that doesn't have a hand-written
-// bio yet (see config/artists.ts) — never left blank, since the caption
-// always opens with an "about the artist" line now.
+// Generated once per artist (see getOrGenerateBio below) and cached in
+// artists.bio, so this only ever runs as a last-resort fallback if the
+// generation call itself fails.
 const GENERIC_BIO = (artistName: string) =>
-  `${artistName} is a recording artist featured in this ranking. A fuller bio hasn't been written for them yet — see worker/src/config/artists.json.`;
+  `${artistName} is a recording artist featured in this ranking.`;
+
+const BIO_SYSTEM_PROMPT = [
+  "You write short, original artist biography paragraphs for a YouTube",
+  "video caption, in the style of a music streaming service's 'about the",
+  "artist' section. Exactly one paragraph, 3-4 sentences, starting with",
+  'the literal phrase "{name} is..." — cover their genre, style, and what',
+  "they're generally known for. If you aren't confident about specific",
+  "biographical facts for this artist (nationality, career milestones,",
+  "specific songs or albums), stay general about genre and style rather",
+  "than inventing details — never fabricate a specific fact you aren't",
+  "confident is true. Never quote or reproduce song lyrics or any other",
+  "copyrighted text. Output only the bio paragraph, nothing else — no",
+  "preamble, no quotation marks around it.",
+].join(" ");
+
+async function getOrGenerateBio(artistId: string, artistName: string, staticBio?: string): Promise<string> {
+  // Hand-written entries in config/artists.json are a curated override —
+  // higher-confidence than a generated guess, so they always win.
+  if (staticBio) return staticBio;
+
+  const { data: artistRow, error } = await supabase.from("artists").select("bio").eq("id", artistId).single();
+  if (error) throw error;
+  if (artistRow.bio) return artistRow.bio;
+
+  try {
+    const generated = (await generateText(BIO_SYSTEM_PROMPT, `Artist name: ${artistName}`, 300)).trim();
+    if (!generated) throw new Error("empty response");
+
+    const { error: saveError } = await supabase.from("artists").update({ bio: generated }).eq("id", artistId);
+    if (saveError) throw saveError;
+
+    console.log(`generated bio for ${artistName}`);
+    return generated;
+  } catch (err) {
+    console.warn(`bio generation failed for ${artistName}, using generic fallback:`, err instanceof Error ? err.message : err);
+    return GENERIC_BIO(artistName);
+  }
+}
 
 // Bottom-of-caption credit line, present on every video regardless of
 // source — the actual copyright-relevant statement: none of the music,
@@ -79,7 +118,7 @@ interface DraftRanking {
   id: string;
   source: string;
   note: string | null;
-  artists: { name: string } | { name: string }[] | null;
+  artists: { id: string; name: string } | { id: string; name: string }[] | null;
 }
 
 interface RankingItemCheck {
@@ -98,12 +137,16 @@ function artistNameOf(ranking: DraftRanking): string {
   return oneOf(ranking.artists)?.name ?? "";
 }
 
+function artistIdOf(ranking: DraftRanking): string {
+  return oneOf(ranking.artists)?.id ?? "";
+}
+
 export async function generateRankingRenderMetadata() {
-  const bioByArtistName = new Map(loadArtistRoster().map((a) => [a.name, a.bio]));
+  const staticBioByName = new Map(loadArtistRoster().map((a) => [a.name, a.bio]));
 
   const { data: draftRankings, error } = await supabase
     .from("rankings")
-    .select("id, source, note, artists(name)")
+    .select("id, source, note, artists(id, name)")
     .eq("status", "draft")
     .returns<DraftRanking[]>();
   if (error) throw error;
@@ -126,7 +169,7 @@ export async function generateRankingRenderMetadata() {
     if (!allDownloaded) continue;
 
     const artistName = artistNameOf(ranking);
-    const bio = bioByArtistName.get(artistName) || GENERIC_BIO(artistName);
+    const bio = await getOrGenerateBio(artistIdOf(ranking), artistName, staticBioByName.get(artistName));
     const { data: video, error: insertError } = await supabase
       .from("ranking_videos")
       .insert({

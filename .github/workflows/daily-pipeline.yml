@@ -55,6 +55,9 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SHEETS_API_KEY: ${{ secrets.GOOGLE_SHEETS_API_KEY }}
+          PERSONAL_RANKINGS_SHEET_ID: ${{ secrets.PERSONAL_RANKINGS_SHEET_ID }}
           # Confirmed against the real account that public uploads are
           # honored (not silently downgraded) before wiring this up —
           # see the actualPrivacyStatus check in publish-post.ts.
