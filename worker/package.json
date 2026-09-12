@@ -17,6 +17,8 @@
     "render-channel-branding": "tsx src/jobs/render-channel-branding.ts",
     "expand-artist-roster": "tsx src/jobs/expand-artist-roster.ts",
     "youtube-oauth-bootstrap": "tsx src/jobs/youtube-oauth-bootstrap.ts",
+    "tiktok-oauth-bootstrap": "tsx src/jobs/tiktok-oauth-bootstrap.ts",
+    "tiktok-upload-test": "tsx src/jobs/tiktok-upload-test.ts",
     "publish-post": "tsx src/jobs/publish-post.ts",
     "remotion:studio": "remotion studio src/remotion/index.ts"
   },
