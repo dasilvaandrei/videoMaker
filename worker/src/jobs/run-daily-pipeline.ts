@@ -128,7 +128,18 @@ export async function runDailyPipeline() {
   await generateRankingRenderMetadata();
   await renderRankingVideos();
   await autoApproveReadyVideos();
-  await publishApprovedClips({ limit: 1 });
+  const publishedCount = await publishApprovedClips({ limit: 1 });
+
+  // A day that produces zero published videos means something upstream
+  // broke (a source API change, every clip download failing — see the
+  // Calvin Harris / yt-dlp "Sign in to confirm you're not a bot"
+  // incident this caught) — throwing here fails the GitHub Actions run,
+  // which triggers GitHub's own run-failure email, instead of every
+  // step's own try/catch silently swallowing the problem and this
+  // logging "complete" for a day that actually published nothing.
+  if (publishedCount === 0) {
+    throw new Error("Daily pipeline produced zero published videos — see logs above for which step failed.");
+  }
 
   console.log("Daily pipeline complete.");
 }

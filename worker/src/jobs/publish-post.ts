@@ -44,7 +44,12 @@ export interface PublishOptions {
   limit?: number;
 }
 
-export async function publishApprovedClips(options: PublishOptions = {}) {
+// Returns the number of videos actually published — run-daily-pipeline.ts
+// uses this to fail loudly (instead of silently completing) on a day
+// where nothing gets published, so a broken step upstream (a source API
+// change, every clip download failing, etc.) surfaces as a failed
+// GitHub Actions run rather than going unnoticed indefinitely.
+export async function publishApprovedClips(options: PublishOptions = {}): Promise<number> {
   const { onlyRankingVideoId, limit } = options;
   const { data: decisions, error: decisionsError } = await supabase
     .from("review_decisions")
@@ -104,6 +109,7 @@ export async function publishApprovedClips(options: PublishOptions = {}) {
 
   console.log(`${eligible.length} ranking video(s) eligible for YouTube publish (privacyStatus=${PRIVACY_STATUS})`);
 
+  let publishedCount = 0;
   for (const video of eligible) {
     const { data: post, error: insertError } = await supabase
       .from("posts")
@@ -150,6 +156,7 @@ export async function publishApprovedClips(options: PublishOptions = {}) {
         .eq("id", post.id);
       if (updateError) throw updateError;
 
+      publishedCount++;
       console.log(
         `published ${video.id} -> https://youtube.com/watch?v=${videoId} (actual privacyStatus=${actualPrivacyStatus})`
       );
@@ -168,6 +175,7 @@ export async function publishApprovedClips(options: PublishOptions = {}) {
         .eq("id", post.id);
     }
   }
+  return publishedCount;
 }
 
 function parseArgs(argv: string[]): PublishOptions {
