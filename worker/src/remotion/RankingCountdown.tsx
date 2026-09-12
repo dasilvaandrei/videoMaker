@@ -17,6 +17,7 @@ import {
   Freeze,
   Img,
   OffthreadVideo,
+  Sequence,
   Series,
   interpolate,
   spring,
@@ -180,12 +181,6 @@ export function sponsorDurationInSeconds(voSeconds: number): number {
 // AbsoluteFill's default `height: 100%` once already pushed a whole
 // block invisibly off-canvas, so this composition avoids that pattern
 // everywhere now.
-// Faint under the VO, purely to give the viewer a taste of the song
-// before it properly starts on segment #5 — loud enough to register as
-// "there's music" for attention-grabbing, quiet enough not to compete
-// with or muddy the spoken hook.
-const INTRO_BACKGROUND_SONG_VOLUME = 0.15;
-
 const IntroHook: React.FC<{
   artistName: string;
   sourceBadge: string;
@@ -193,8 +188,7 @@ const IntroHook: React.FC<{
   introVoSrc?: string | null;
   introAvatarUrl?: string | null;
   introBgLoopSrc?: string | null;
-  backgroundSongSrc?: string | null;
-}> = ({ artistName, sourceBadge, introText, introVoSrc, introAvatarUrl, introBgLoopSrc, backgroundSongSrc }) => {
+}> = ({ artistName, sourceBadge, introText, introVoSrc, introAvatarUrl, introBgLoopSrc }) => {
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
 
@@ -204,7 +198,6 @@ const IntroHook: React.FC<{
   return (
     <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
       {introVoSrc && <Audio src={introVoSrc} />}
-      {backgroundSongSrc && <Audio src={backgroundSongSrc} volume={INTRO_BACKGROUND_SONG_VOLUME} />}
 
       {/* Top half — artist photo, or a plain dark gradient if none resolved. */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "50%", overflow: "hidden" }}>
@@ -584,13 +577,31 @@ const RankingSegment: React.FC<
     disclaimer?: string | null;
     holdLastFrame: boolean;
     allSegments: RankingSegmentData[];
+    // Rank 5 only — its audio is already playing via the continuous
+    // cross-fade Audio element at the RankingCountdown level (see
+    // FIRST_SONG_CONTINUOUS_AUDIO below), so its own embedded video
+    // audio is muted here to avoid doubling up.
+    muted?: boolean;
   }
-> = ({ videoSrc, rank, durationInSeconds, sfxSrc, artistName, sourceBadge, disclaimer, holdLastFrame, allSegments }) => {
+> = ({
+  videoSrc,
+  rank,
+  durationInSeconds,
+  sfxSrc,
+  artistName,
+  sourceBadge,
+  disclaimer,
+  holdLastFrame,
+  allSegments,
+  muted,
+}) => {
   const { fps } = useVideoConfig();
   const frame = useCurrentFrame();
   const clipDurationInFrames = Math.round(durationInSeconds * fps);
 
-  const video = <OffthreadVideo src={videoSrc} style={{ width: "100%", height: "100%", objectFit: "cover" }} />;
+  const video = (
+    <OffthreadVideo src={videoSrc} muted={muted} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+  );
 
   // #2's segment runs a bit longer than usual specifically to host the
   // follow-popup overlay on top of its own still-playing clip (see
@@ -646,6 +657,12 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
 }) => {
   const { fps } = useVideoConfig();
 
+  // Rank 5 (index 0) gets its audio from the continuous cross-fade Audio
+  // element below instead of its own embedded video audio, so the song
+  // doesn't audibly restart from 0:00 the moment the intro ends — only
+  // when there's actually an intro for it to continue from.
+  const firstSongMuted = Boolean(introText);
+
   const songSequences = segments.map((segment, index) => {
     const isLast = index === segments.length - 1;
     const durationInFrames = Math.round(segmentDurationInSeconds(segment) * fps) + (isLast ? 15 : 0);
@@ -659,6 +676,7 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
           disclaimer={disclaimer}
           holdLastFrame={isLast}
           allSegments={segments}
+          muted={index === 0 ? firstSongMuted : undefined}
         />
       </Series.Sequence>
     );
@@ -687,22 +705,52 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
     );
   }
 
+  const introFrames = introText ? Math.round(introDurationInSeconds(introVoSeconds) * fps) : 0;
+  const firstSongFrames = segments.length > 0 ? Math.round(segmentDurationInSeconds(segments[0]) * fps) : 0;
+  // Half-second swell into full volume, timed to land right as the
+  // countdown visually starts on #5 — feels like the song "arriving"
+  // rather than an abrupt jump the instant the scene cuts.
+  const volumeRampFrames = Math.round(0.5 * fps);
+
   return (
-    <Series>
-      {introText && (
-        <Series.Sequence durationInFrames={Math.round(introDurationInSeconds(introVoSeconds) * fps)}>
-          <IntroHook
-            artistName={artistName}
-            sourceBadge={sourceBadge}
-            introText={introText}
-            introVoSrc={introVoSrc}
-            introAvatarUrl={introAvatarUrl}
-            introBgLoopSrc={introBgLoopSrc}
-            backgroundSongSrc={segments[0]?.videoSrc}
+    <AbsoluteFill>
+      {/* One continuous Audio spanning the intro + song #5, instead of
+          each scene playing its own copy from 0:00 — quiet under the
+          spoken hook, swelling to full right as #5 begins, so the song
+          feels like it's been playing the whole time rather than
+          restarting. Sits outside the Series (which resets each child's
+          local frame count to 0, incompatible with one audio element
+          spanning two of its sequences) as a plain Sequence overlay;
+          renders no pixels, so it doesn't interfere with the Series'
+          visuals underneath. */}
+      {introText && segments.length > 0 && (
+        <Sequence from={0} durationInFrames={introFrames + firstSongFrames} layout="none">
+          <Audio
+            src={segments[0].videoSrc}
+            volume={(f) =>
+              interpolate(f, [0, introFrames - volumeRampFrames, introFrames], [0.15, 0.15, 1], {
+                extrapolateLeft: "clamp",
+                extrapolateRight: "clamp",
+              })
+            }
           />
-        </Series.Sequence>
+        </Sequence>
       )}
-      {songSequences}
-    </Series>
+      <Series>
+        {introText && (
+          <Series.Sequence durationInFrames={introFrames}>
+            <IntroHook
+              artistName={artistName}
+              sourceBadge={sourceBadge}
+              introText={introText}
+              introVoSrc={introVoSrc}
+              introAvatarUrl={introAvatarUrl}
+              introBgLoopSrc={introBgLoopSrc}
+            />
+          </Series.Sequence>
+        )}
+        {songSequences}
+      </Series>
+    </AbsoluteFill>
   );
 };
