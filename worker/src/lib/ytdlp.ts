@@ -16,10 +16,21 @@ export async function downloadYoutubeSection(
 ): Promise<void> {
   const url = `https://www.youtube.com/watch?v=${youtubeVideoId}`;
 
+  // Datacenter IPs (every GitHub Actions runner included) get much
+  // heavier bot-detection scoring from YouTube than a home connection —
+  // this is what actually broke the real Calvin Harris run (all 5 clips
+  // failed with "Sign in to confirm you're not a bot"), not anything
+  // specific to that artist. Cookies from a real logged-in browser
+  // session substantially reduce (not eliminate) that flagging.
+  // YOUTUBE_COOKIES_PATH is optional — omit it for local dev, where the
+  // home IP mostly doesn't need this.
+  const cookiesPath = process.env.YOUTUBE_COOKIES_PATH;
+
   await execFileAsync(
     "yt-dlp",
     [
       "--no-playlist",
+      ...(cookiesPath ? ["--cookies", cookiesPath] : []),
       "--download-sections",
       `*${startSeconds}-${endSeconds}`,
       // Without this, the cut can only land on a keyframe boundary

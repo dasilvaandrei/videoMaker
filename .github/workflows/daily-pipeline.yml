@@ -54,6 +54,24 @@ jobs:
       - name: Create empty .env for --env-file
         run: touch .env
 
+      # Optional — see worker/src/lib/ytdlp.ts. YouTube scores GitHub
+      # Actions' datacenter IPs far more aggressively than a home
+      # connection ("Sign in to confirm you're not a bot" blocked every
+      # clip download in a real run); cookies from a real logged-in
+      # session substantially reduce that. Skipped entirely (no
+      # YOUTUBE_COOKIES_PATH set at all, same as before this existed) if
+      # the secret hasn't been added yet, rather than writing an empty
+      # cookies file that would make yt-dlp worse off than passing
+      # nothing.
+      - name: Write YouTube cookies file (if configured)
+        if: ${{ secrets.YOUTUBE_COOKIES_TXT != '' }}
+        working-directory: worker
+        env:
+          YOUTUBE_COOKIES_TXT: ${{ secrets.YOUTUBE_COOKIES_TXT }}
+        run: |
+          echo "$YOUTUBE_COOKIES_TXT" > youtube-cookies.txt
+          echo "YOUTUBE_COOKIES_PATH=youtube-cookies.txt" >> "$GITHUB_ENV"
+
       - name: Run daily pipeline
         working-directory: worker
         env:
