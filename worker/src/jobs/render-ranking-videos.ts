@@ -183,21 +183,25 @@ export async function renderRankingVideos() {
       // intro's, purely for visual variety between the two segments.
       const sponsor = video.sponsor_name ? SPONSORS.find((s) => s.name === video.sponsor_name) ?? null : null;
       let sponsorVoSignedUrl: string | null = null;
-      let sponsorAssetSignedUrl: string | null = null;
+      let sponsorAssetSignedUrls: string[] = [];
       let sponsorBgLoopSignedUrl: string | null = null;
       let sponsorSeconds = 0;
-      if (sponsor?.voStoragePath && sponsor.assetStoragePath) {
+      if (sponsor?.voStoragePath && sponsor.assetStoragePaths.length > 0) {
         const { data: voSigned, error: voSignError } = await supabase.storage
           .from(MEDIA_BUCKET)
           .createSignedUrl(sponsor.voStoragePath, SIGNED_URL_TTL_SECONDS);
         if (voSignError) throw voSignError;
         sponsorVoSignedUrl = voSigned.signedUrl;
 
-        const { data: assetSigned, error: assetSignError } = await supabase.storage
-          .from(MEDIA_BUCKET)
-          .createSignedUrl(sponsor.assetStoragePath, SIGNED_URL_TTL_SECONDS);
-        if (assetSignError) throw assetSignError;
-        sponsorAssetSignedUrl = assetSigned.signedUrl;
+        sponsorAssetSignedUrls = await Promise.all(
+          sponsor.assetStoragePaths.map(async (assetPath) => {
+            const { data: assetSigned, error: assetSignError } = await supabase.storage
+              .from(MEDIA_BUCKET)
+              .createSignedUrl(assetPath, SIGNED_URL_TTL_SECONDS);
+            if (assetSignError) throw assetSignError;
+            return assetSigned.signedUrl;
+          })
+        );
 
         const sponsorBgLoopPath = BG_LOOP_PATHS[Math.floor(Math.random() * BG_LOOP_PATHS.length)];
         const { data: sponsorBgLoopSigned, error: sponsorBgLoopSignError } = await supabase.storage
@@ -317,7 +321,7 @@ export async function renderRankingVideos() {
             sponsorAffiliateUrl: sponsor?.affiliateUrl ?? null,
             sponsorVoSrc: sponsorVoSignedUrl,
             sponsorVoDurationSeconds: sponsor?.voDurationSeconds ?? null,
-            sponsorAssetUrl: sponsorAssetSignedUrl,
+            sponsorAssetUrls: sponsorAssetSignedUrls,
             sponsorAssetType: sponsor?.assetType ?? null,
             sponsorBgLoopSrc: sponsorBgLoopSignedUrl,
             segments,

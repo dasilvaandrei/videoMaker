@@ -82,7 +82,9 @@ export type RankingCountdownProps = {
   sponsorAffiliateUrl?: string | null;
   sponsorVoSrc?: string | null;
   sponsorVoDurationSeconds?: number | null;
-  sponsorAssetUrl?: string | null;
+  // Cycles through during the segment (see SponsorSegment) rather than
+  // holding on one static image the whole time.
+  sponsorAssetUrls?: string[];
   sponsorAssetType?: "video" | "image" | null;
   sponsorBgLoopSrc?: string | null;
 };
@@ -262,29 +264,62 @@ const IntroHook: React.FC<{
 // requirement (FTC disclosure for affiliate content), not optional
 // polish — see generate-ranking-render-metadata.ts's caption disclosure
 // for the other half of that.
+// How long each asset holds before crossfading to the next — a plain
+// static image the whole segment felt flat, so multiple creative assets
+// (see config/sponsors.ts's assetStoragePaths) cycle through instead.
+const SPONSOR_CYCLE_SECONDS = 2.2;
+const SPONSOR_CROSSFADE_SECONDS = 0.35;
+
 const SponsorSegment: React.FC<{
   sponsorName: string;
   sponsorVoSrc: string;
-  sponsorAssetUrl?: string | null;
+  sponsorAssetUrls?: string[];
   sponsorAssetType?: "video" | "image" | null;
   sponsorBgLoopSrc?: string | null;
-}> = ({ sponsorName, sponsorVoSrc, sponsorAssetUrl, sponsorAssetType, sponsorBgLoopSrc }) => {
+}> = ({ sponsorName, sponsorVoSrc, sponsorAssetUrls, sponsorAssetType, sponsorBgLoopSrc }) => {
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
 
   const scale = spring({ frame, fps, config: { damping: 10, stiffness: 160, mass: 0.6 } });
   const opacity = interpolate(frame, [0, 5], [0, 1], { extrapolateRight: "clamp" });
 
+  const assets = sponsorAssetUrls ?? [];
+  const cycleFrames = Math.round(SPONSOR_CYCLE_SECONDS * fps);
+  const crossfadeFrames = Math.round(SPONSOR_CROSSFADE_SECONDS * fps);
+  const currentIndex = assets.length > 0 ? Math.floor(frame / cycleFrames) % assets.length : 0;
+  const nextIndex = assets.length > 0 ? (currentIndex + 1) % assets.length : 0;
+  const frameInCycle = frame % cycleFrames;
+  const crossfade = interpolate(frameInCycle, [cycleFrames - crossfadeFrames, cycleFrames], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const renderAsset = (url: string, assetOpacity: number) =>
+    sponsorAssetType === "video" ? (
+      <OffthreadVideo
+        src={url}
+        muted
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: assetOpacity }}
+      />
+    ) : (
+      <Img
+        src={url}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: assetOpacity }}
+      />
+    );
+
   return (
     <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
       <Audio src={sponsorVoSrc} />
 
-      {/* Top half — the sponsor's own creative asset. */}
+      {/* Top half — the sponsor's creative assets, crossfading between
+          them (a single static image the whole segment felt flat). */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "50%", overflow: "hidden" }}>
-        {sponsorAssetUrl && sponsorAssetType === "video" ? (
-          <OffthreadVideo src={sponsorAssetUrl} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        ) : sponsorAssetUrl && sponsorAssetType === "image" ? (
-          <Img src={sponsorAssetUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        {assets.length > 0 ? (
+          <>
+            {renderAsset(assets[currentIndex], 1 - crossfade)}
+            {assets.length > 1 && crossfade > 0 && renderAsset(assets[nextIndex], crossfade)}
+          </>
         ) : (
           <AbsoluteFill style={{ background: "linear-gradient(160deg, #1a1a1a 0%, #050505 100%)" }} />
         )}
@@ -597,7 +632,7 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
   sponsorName,
   sponsorVoSrc,
   sponsorVoDurationSeconds,
-  sponsorAssetUrl,
+  sponsorAssetUrls,
   sponsorAssetType,
   sponsorBgLoopSrc,
 }) => {
@@ -636,7 +671,7 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
         <SponsorSegment
           sponsorName={sponsorName}
           sponsorVoSrc={sponsorVoSrc}
-          sponsorAssetUrl={sponsorAssetUrl}
+          sponsorAssetUrls={sponsorAssetUrls}
           sponsorAssetType={sponsorAssetType}
           sponsorBgLoopSrc={sponsorBgLoopSrc}
         />

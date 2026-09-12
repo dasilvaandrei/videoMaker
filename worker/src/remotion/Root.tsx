@@ -69,7 +69,7 @@ const defaultProps: Props = {
   sponsorAffiliateUrl: null,
   sponsorVoSrc: null,
   sponsorVoDurationSeconds: null,
-  sponsorAssetUrl: null,
+  sponsorAssetUrls: [],
   sponsorAssetType: null,
   sponsorBgLoopSrc: null,
   segments: [5, 4, 3, 2, 1].map((rank) => ({
