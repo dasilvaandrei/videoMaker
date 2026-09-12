@@ -165,11 +165,19 @@ export async function renderRankingVideos() {
                 : STANDARD_DISPLAY_SECONDS;
           const durationInSeconds = Math.min(fullClipDuration, targetSeconds);
 
+          // Last.fm's playcount only reflects its own small scrobbling
+          // user base, not real-world stream totals — showing the raw
+          // number on-screen reads as absurdly low for a genuine hit.
+          // YouTube's view count is a real, verifiable total, so it
+          // stays. The number is still recorded in ranking_items for
+          // reference; this only suppresses the on-screen display.
+          const metricLabel = ranking.source === "lastfm" ? null : item.metric_label ?? item.note ?? null;
+
           return {
             videoSrc: signed.signedUrl,
             rank: item.rank,
             songTitle: song?.title ?? "",
-            metricLabel: item.metric_label ?? item.note ?? null,
+            metricLabel,
             durationInSeconds,
           };
         })

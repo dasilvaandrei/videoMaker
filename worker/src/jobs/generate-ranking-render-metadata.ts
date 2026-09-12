@@ -16,12 +16,19 @@ import { supabase } from "../lib/supabase.js";
 // countdown-ranking channel's upload history via the Data API showed its
 // highest-performing titles consistently follow "Ranking The Best X" in
 // Title Case, never all-caps.
-const SOURCE_TITLE_SUFFIX: Record<string, string> = {
-  youtube: " (YouTube Views)",
+// "Top 5 Songs" for youtube (its view-count numbers are real, verifiable
+// totals, safe to imply precision) vs. "Top 5 Most Popular Songs" for
+// lastfm — Last.fm's playcount only reflects its own (much smaller)
+// scrobbling user base, not real-world stream totals, so a specific
+// number reads as misleadingly tiny for a genuine hit. "Most popular"
+// makes a qualitative claim instead of an implied precise one.
+const SOURCE_TITLE_WORDING: Record<string, string> = {
+  lastfm: "Top 5 Most Popular Songs",
+  youtube: "Top 5 Songs (YouTube Views)",
 };
 
 const SOURCE_CAPTION_LINE: Record<string, string> = {
-  lastfm: "Ranked by real Last.fm play counts.",
+  lastfm: "Ranked by overall popularity on Last.fm.",
   youtube: "Ranked by official YouTube view counts.",
 };
 
@@ -97,7 +104,7 @@ function buildTitle(artistName: string, source: string): string {
   if (source === "personal") {
     return `Ranking My Top 5 ${artistName} Songs 🔥 (Agree?)`;
   }
-  return `Ranking ${artistName}'s Top 5 Songs${SOURCE_TITLE_SUFFIX[source] ?? ""} 🔥`;
+  return `Ranking ${artistName}'s ${SOURCE_TITLE_WORDING[source] ?? "Top 5 Songs"} 🔥`;
 }
 
 // Caption is now: about-the-artist blurb, then the ranking description,
