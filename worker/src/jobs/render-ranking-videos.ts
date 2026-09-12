@@ -27,7 +27,13 @@ const RANK_DING_PATH = "sfx/rank-ding.mp3";
 // split-screen bottom half — see jobs/resolve-bg-loops.ts for how these
 // were sourced (CC-licensed, not the same Content ID risk tradeoff as
 // the artist clips) and how to refresh this list.
-const BG_LOOP_PATHS = ["bg-loops/kinetic-sand.mp4", "bg-loops/3d-render-loop.mp4", "bg-loops/satisfying-loop.mp4"];
+const BG_LOOP_PATHS = [
+  "bg-loops/kinetic-sand.mp4",
+  "bg-loops/3d-render-loop.mp4",
+  "bg-loops/satisfying-loop.mp4",
+  "bg-loops/minecraft-parkour.mp4",
+  "bg-loops/gta5-megaramp.mp4",
+];
 
 // No on-screen badge for Last.fm — "LAST.FM" reads as unfamiliar jargon
 // to a casual viewer (the source is named in the caption instead).

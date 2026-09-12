@@ -25,13 +25,20 @@ import { supabase } from "../lib/supabase.js";
 
 const MEDIA_BUCKET = "media";
 // Picked from a live creativeCommon-filtered search (see this file's
-// header) — not guessed: kinetic sand (the user's own example), a 3D
-// render loop (also the user's example), and a generic oddly-satisfying
-// loop for variety.
+// header) — not guessed: kinetic sand, a 3D render loop, and a generic
+// oddly-satisfying loop (the user's original examples), plus Minecraft
+// parkour and GTA 5 mega-ramp gameplay (requested later — both sourced
+// from channels that explicitly self-label "no copyright"/"free to use"
+// in addition to the creativeCommon license filter). Note: no GTA 6 —
+// the game hasn't released, so there's no real gameplay footage to
+// source; every "gta 6" search result was either GTA 5 clips tagged
+// #gta6 or unrelated news/reaction videos, not usable.
 const SOURCE_VIDEOS: { videoId: string; slug: string }[] = [
   { videoId: "lQU-PwVMKmU", slug: "kinetic-sand" },
   { videoId: "f1xDEcBLFNI", slug: "3d-render-loop" },
   { videoId: "2WxZpsR-rLU", slug: "satisfying-loop" },
+  { videoId: "s600FYgI5-s", slug: "minecraft-parkour" },
+  { videoId: "74voi0vlxHE", slug: "gta5-megaramp" },
 ];
 // Long enough to cover virtually any intro VO length without running out
 // mid-sequence (see introDurationInSeconds in RankingCountdown.tsx —
