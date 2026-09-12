@@ -12,10 +12,8 @@
 export interface Sponsor {
   name: string;
   affiliateUrl: string;
-  // Spoken during the segment — kept deliberately generic (no specific
-  // product claims) since accuracy of what the product actually does
-  // hasn't been confirmed; tighten once the operator provides real
-  // copy/features worth calling out.
+  // Spoken during the segment. Product claims here are confirmed
+  // against songbox.com directly (fetched 2026-09-12), not guessed.
   script: string;
   assetStoragePath: string | null;
   assetType: "video" | "image" | null;
@@ -27,11 +25,11 @@ export const SPONSORS: Sponsor[] = [
   {
     name: "SongBox",
     affiliateUrl: "https://songbox.com/?via=andrei",
-    script: "By the way — if you're into music like this, I've been using SongBox. I left the link in my bio if you want to check it out.",
-    assetStoragePath: null,
-    assetType: null,
+    script: "SongBox lets you share unreleased music privately, or sell it straight to fans and keep 100% of the revenue — link's in my bio.",
+    assetStoragePath: "sponsor-assets/songbox.jpg",
+    assetType: "image",
     voStoragePath: "sponsor-vo/songbox.mp3",
-    voDurationSeconds: 7.2,
+    voDurationSeconds: 8.17,
   },
 ];
 
