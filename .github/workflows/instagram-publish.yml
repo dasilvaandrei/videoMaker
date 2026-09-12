@@ -1,0 +1,51 @@
+name: Instagram publish
+
+# Instagram-only, separate from daily-pipeline.yml's 3pm fetch/render/
+# YouTube/TikTok run — publishes on its own schedule rather than being
+# tied to when today's video gets rendered. Draws from whatever's
+# already backlogged in ranking_videos (oldest approved+ready video not
+# yet posted to Instagram), same as every other publish job — no
+# fetch/render/Chromium/yt-dlp steps needed here at all.
+#
+# GitHub Actions cron is UTC-only and doesn't shift for daylight saving
+# — see daily-pipeline.yml's comment for the same fixed-EST-offset
+# caveat (this drifts to 7am ET during EDT, roughly March-November).
+on:
+  schedule:
+    - cron: "0 11 * * *" # 6:00 AM EST / 7:00 AM EDT
+  workflow_dispatch: {} # manual trigger, e.g. to catch up after a gap
+
+jobs:
+  instagram-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      # worker/package.json's job scripts all pass Node's --env-file=../.env
+      # — see daily-pipeline.yml's comment for why this needs to exist
+      # (not be populated) even in CI, where real values come from the
+      # env: block below.
+      - name: Create empty .env for --env-file
+        run: touch .env
+
+      - name: Publish to Instagram
+        working-directory: worker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          # Static secret, not auto-refreshed — see lib/meta.ts's
+          # refreshLongLivedToken(). Long-lived tokens last 60 days; this
+          # will need tiktok-oauth-bootstrap.ts's Instagram equivalent
+          # (instagram-oauth-bootstrap.ts) re-run and this secret updated
+          # before then, or this run starts failing loudly once it expires.
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          META_INSTAGRAM_USER_ID: ${{ secrets.META_INSTAGRAM_USER_ID }}
+        run: npm run run-instagram-publish

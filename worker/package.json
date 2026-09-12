@@ -15,6 +15,7 @@
     "generate-ranking-render-metadata": "tsx --env-file=../.env src/jobs/generate-ranking-render-metadata.ts",
     "render-ranking-videos": "tsx --env-file=../.env src/jobs/render-ranking-videos.ts",
     "run-daily-pipeline": "tsx --env-file=../.env src/jobs/run-daily-pipeline.ts",
+    "run-instagram-publish": "tsx --env-file=../.env src/jobs/run-instagram-publish.ts",
     "render-channel-branding": "tsx --env-file=../.env src/jobs/render-channel-branding.ts",
     "expand-artist-roster": "tsx --env-file=../.env src/jobs/expand-artist-roster.ts",
     "youtube-oauth-bootstrap": "tsx --env-file=../.env src/jobs/youtube-oauth-bootstrap.ts",
