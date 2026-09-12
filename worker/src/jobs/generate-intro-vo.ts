@@ -26,6 +26,7 @@
 
 import { synthesizeSpeech } from "../lib/elevenlabs.js";
 import { probeDurationSeconds } from "../lib/ffmpeg.js";
+import { getChannelThumbnailUrl, searchOfficialChannel } from "../lib/youtube.js";
 import { supabase } from "../lib/supabase.js";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -95,7 +96,44 @@ function pickTemplate(templates: Template[], rankingId: string): Template {
 interface DraftRanking {
   id: string;
   source: string;
-  artists: { name: string } | { name: string }[] | null;
+  artists:
+    | { id: string; name: string; youtube_channel_id: string | null; avatar_url: string | null }
+    | { id: string; name: string; youtube_channel_id: string | null; avatar_url: string | null }[]
+    | null;
+}
+
+// Split-screen's top half (see RankingCountdown.tsx's IntroHook) — the
+// artist's own channel photo, resolved once and cached like bio/
+// youtube_channel_id. Never throws: a missing photo just means the
+// intro falls back to a plain background for that half, not a broken
+// render.
+async function getOrResolveAvatarUrl(
+  artistId: string,
+  artistName: string,
+  existingAvatarUrl: string | null,
+  existingChannelId: string | null
+): Promise<string | null> {
+  if (existingAvatarUrl) return existingAvatarUrl;
+
+  try {
+    let channelId = existingChannelId;
+    if (!channelId) {
+      channelId = await searchOfficialChannel(artistName);
+      if (channelId) {
+        await supabase.from("artists").update({ youtube_channel_id: channelId }).eq("id", artistId);
+      }
+    }
+    if (!channelId) return null;
+
+    const avatarUrl = await getChannelThumbnailUrl(channelId);
+    if (!avatarUrl) return null;
+
+    await supabase.from("artists").update({ avatar_url: avatarUrl }).eq("id", artistId);
+    return avatarUrl;
+  } catch (err) {
+    console.warn(`avatar resolution failed for ${artistName}:`, err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 interface RankingItemCheck {
@@ -113,7 +151,7 @@ function oneOf<T>(value: T | T[] | null): T | null {
 export async function generateIntroVo() {
   const { data: candidates, error } = await supabase
     .from("rankings")
-    .select("id, source, artists(name)")
+    .select("id, source, artists(id, name, youtube_channel_id, avatar_url)")
     .eq("status", "draft")
     .is("intro_vo_storage_path", null)
     .returns<DraftRanking[]>();
@@ -136,7 +174,13 @@ export async function generateIntroVo() {
     });
     if (!allDownloaded) continue;
 
-    const artistName = oneOf(ranking.artists)?.name ?? "";
+    const artist = oneOf(ranking.artists);
+    const artistName = artist?.name ?? "";
+    // Best-effort — a failed/missing lookup just means no avatar for
+    // this video's intro, not a blocked render (unlike the VO itself).
+    if (artist) {
+      await getOrResolveAvatarUrl(artist.id, artistName, artist.avatar_url, artist.youtube_channel_id);
+    }
     const template =
       ranking.source === "personal"
         ? pickTemplate(PERSONAL_TEMPLATES, ranking.id)

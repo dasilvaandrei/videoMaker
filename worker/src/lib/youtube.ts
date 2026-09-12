@@ -74,6 +74,24 @@ export async function searchOfficialChannel(artistName: string): Promise<string 
   return body.items?.[0]?.snippet?.channelId ?? null;
 }
 
+// The artist's channel profile photo — used as the intro's split-screen
+// top half (see jobs/generate-intro-vo.ts). Cached once per artist in
+// artists.avatar_url, same as searchOfficialChannel's channel id.
+export async function getChannelThumbnailUrl(channelId: string): Promise<string | null> {
+  const url = new URL(`${DATA_API_BASE}/channels`);
+  url.search = new URLSearchParams({
+    key: apiKey(),
+    id: channelId,
+    part: "snippet",
+  }).toString();
+
+  const res = await fetch(url);
+  const body = await res.json();
+  if (!res.ok) throw new Error(`YouTube channels.list failed for ${channelId}: ${res.status} ${JSON.stringify(body)}`);
+  const thumbnails = body.items?.[0]?.snippet?.thumbnails;
+  return thumbnails?.high?.url ?? thumbnails?.medium?.url ?? thumbnails?.default?.url ?? null;
+}
+
 export async function getVideosInfo(videoIds: string[]): Promise<YoutubeVideoInfo[]> {
   if (videoIds.length === 0) return [];
   const results: YoutubeVideoInfo[] = [];

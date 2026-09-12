@@ -58,6 +58,8 @@ const defaultProps: Props = {
   introText: "THE NUMBERS DON'T LIE 📊",
   introVoSrc: null,
   introDurationInSeconds: null,
+  introAvatarUrl: null,
+  introBgLoopSrc: null,
   segments: [5, 4, 3, 2, 1].map((rank) => ({
     videoSrc: "",
     rank,

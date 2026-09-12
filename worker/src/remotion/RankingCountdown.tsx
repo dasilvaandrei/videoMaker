@@ -15,6 +15,7 @@ import {
   AbsoluteFill,
   Audio,
   Freeze,
+  Img,
   OffthreadVideo,
   Series,
   interpolate,
@@ -65,6 +66,13 @@ export type RankingCountdownProps = {
   introText?: string | null;
   introVoSrc?: string | null;
   introDurationInSeconds?: number | null;
+  // Split-screen intro visuals (the "retention hack" — a recognizable
+  // artist photo up top, kinetic B-roll below, so the eye has something
+  // to lock onto while the VO plays instead of a static black screen).
+  // Both fall back to a plain dark half rather than breaking the render
+  // if unresolved — see generate-intro-vo.ts / resolve-bg-loops.ts.
+  introAvatarUrl?: string | null;
+  introBgLoopSrc?: string | null;
   // Ordered 5 -> 1, i.e. playback order (the reveal builds to #1).
   segments: RankingSegmentData[];
 };
@@ -140,18 +148,24 @@ export function introDurationInSeconds(vo?: number | null): number {
   return (vo ?? INTRO_FALLBACK_SECONDS - INTRO_BUFFER_SECONDS) + INTRO_BUFFER_SECONDS;
 }
 
-// Spoken-hook intro (see generate-intro-vo.ts) — bold pop-in hook text
-// over a plain dark background, no song footage yet, artist's own
-// ScoreboardSidebar shown all-dim/upcoming to foreshadow the countdown
-// (reuses ScoreboardSidebar with a sentinel activeRank of 6, i.e. "before
-// #5", so every real rank 1-5 reads as not-yet-revealed).
+// Spoken-hook intro (see generate-intro-vo.ts) — the "split-screen
+// retention hack": a recognizable artist photo up top (psychological eye
+// contact if it's a face shot), kinetic "satisfying" B-roll below (the
+// motion keeps the eye locked on screen while the VO plays), with the
+// hook text banner straddling the seam between them. Each half is a
+// plain absolutely-positioned div using exactly two of
+// top/bottom/height, never all three — mixing e.g. `top` with
+// AbsoluteFill's default `height: 100%` once already pushed a whole
+// block invisibly off-canvas, so this composition avoids that pattern
+// everywhere now.
 const IntroHook: React.FC<{
   artistName: string;
   sourceBadge: string;
   introText: string;
   introVoSrc?: string | null;
-  segments: RankingSegmentData[];
-}> = ({ artistName, sourceBadge, introText, introVoSrc, segments }) => {
+  introAvatarUrl?: string | null;
+  introBgLoopSrc?: string | null;
+}> = ({ artistName, sourceBadge, introText, introVoSrc, introAvatarUrl, introBgLoopSrc }) => {
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
 
@@ -161,23 +175,44 @@ const IntroHook: React.FC<{
   return (
     <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
       {introVoSrc && <Audio src={introVoSrc} />}
+
+      {/* Top half — artist photo, or a plain dark gradient if none resolved. */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "50%", overflow: "hidden" }}>
+        {introAvatarUrl ? (
+          <Img src={introAvatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <AbsoluteFill style={{ background: "linear-gradient(160deg, #1a1a1a 0%, #050505 100%)" }} />
+        )}
+        {/* Scrim so the header title stays legible over a bright photo. */}
+        <AbsoluteFill
+          style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.1) 55%, rgba(0,0,0,0.55) 100%)" }}
+        />
+      </div>
+
+      {/* Bottom half — kinetic B-roll loop, or a plain dark gradient if none resolved. Muted: its own audio never competes with the VO. */}
+      <div style={{ position: "absolute", top: "50%", left: 0, right: 0, bottom: 0, overflow: "hidden" }}>
+        {introBgLoopSrc ? (
+          <OffthreadVideo src={introBgLoopSrc} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <AbsoluteFill style={{ background: "linear-gradient(200deg, #1a1a1a 0%, #050505 100%)" }} />
+        )}
+      </div>
+
       <Header artistName={artistName} sourceBadge={sourceBadge} disclaimer={null} />
-      <ScoreboardSidebar activeRank={6} segments={segments} />
-      {/* A plain positioned div, not AbsoluteFill — AbsoluteFill forces
-          height: 100% alongside its default top/bottom: 0, so overriding
-          just `top` here left `height: 100%` in place too, pushing this
-          whole box (and its vertically-centered content) far below the
-          visible canvas instead of into the lower third of it. */}
+
+      {/* Hook text banner, straddling the seam between the two halves so
+          it reads clearly regardless of what's behind it on either side. */}
       <div
         style={{
           position: "absolute",
-          top: "62%",
+          top: "42%",
           left: 0,
           right: 0,
-          bottom: 0,
+          height: "16%",
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
+          backgroundColor: "rgba(0,0,0,0.6)",
         }}
       >
         <div
@@ -185,12 +220,12 @@ const IntroHook: React.FC<{
             transform: `scale(${scale})`,
             opacity,
             fontFamily: rankFontFamily,
-            fontSize: width * 0.078,
+            fontSize: width * 0.068,
             color: "white",
-            WebkitTextStroke: "4px black",
+            WebkitTextStroke: "3px black",
             textAlign: "center",
             lineHeight: 1.05,
-            padding: `0 ${width * 0.08}px`,
+            padding: `0 ${width * 0.06}px`,
           }}
         >
           {introText}
@@ -422,6 +457,8 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
   introText,
   introVoSrc,
   introDurationInSeconds: introVoSeconds,
+  introAvatarUrl,
+  introBgLoopSrc,
   segments,
 }) => {
   const { fps } = useVideoConfig();
@@ -435,7 +472,8 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
             sourceBadge={sourceBadge}
             introText={introText}
             introVoSrc={introVoSrc}
-            segments={segments}
+            introAvatarUrl={introAvatarUrl}
+            introBgLoopSrc={introBgLoopSrc}
           />
         </Series.Sequence>
       )}

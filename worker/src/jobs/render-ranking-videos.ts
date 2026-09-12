@@ -23,6 +23,11 @@ const STANDARD_DISPLAY_SECONDS = 7.5;
 // Synthesized once (a two-tone chime, not a licensed sound), uploaded to
 // this fixed path — every render just signs a fresh URL for the same file.
 const RANK_DING_PATH = "sfx/rank-ding.mp3";
+// Small, fixed library of "satisfying" B-roll loops for the intro's
+// split-screen bottom half — see jobs/resolve-bg-loops.ts for how these
+// were sourced (CC-licensed, not the same Content ID risk tradeoff as
+// the artist clips) and how to refresh this list.
+const BG_LOOP_PATHS = ["bg-loops/kinetic-sand.mp4", "bg-loops/3d-render-loop.mp4", "bg-loops/satisfying-loop.mp4"];
 
 // No on-screen badge for Last.fm — "LAST.FM" reads as unfamiliar jargon
 // to a casual viewer (the source is named in the caption instead).
@@ -70,7 +75,7 @@ interface RankingRow {
   intro_on_screen_text: string | null;
   intro_vo_storage_path: string | null;
   intro_vo_duration_seconds: number | null;
-  artists: { name: string } | { name: string }[] | null;
+  artists: { name: string; avatar_url: string | null } | { name: string; avatar_url: string | null }[] | null;
 }
 
 function oneOf<T>(value: T | T[] | null): T | null {
@@ -124,7 +129,9 @@ export async function renderRankingVideos() {
     try {
       const { data: ranking, error: rankingError } = await supabase
         .from("rankings")
-        .select("source, intro_script, intro_on_screen_text, intro_vo_storage_path, intro_vo_duration_seconds, artists(name)")
+        .select(
+          "source, intro_script, intro_on_screen_text, intro_vo_storage_path, intro_vo_duration_seconds, artists(name, avatar_url)"
+        )
         .eq("id", video.ranking_id)
         .single<RankingRow>();
       if (rankingError) throw rankingError;
@@ -137,6 +144,12 @@ export async function renderRankingVideos() {
         if (introSignError) throw introSignError;
         introVoSignedUrl = introSigned.signedUrl;
       }
+
+      const bgLoopPath = BG_LOOP_PATHS[Math.floor(Math.random() * BG_LOOP_PATHS.length)];
+      const { data: bgLoopSigned, error: bgLoopSignError } = await supabase.storage
+        .from(MEDIA_BUCKET)
+        .createSignedUrl(bgLoopPath, SIGNED_URL_TTL_SECONDS);
+      if (bgLoopSignError) throw bgLoopSignError;
 
       const { data: items, error: itemsError } = await supabase
         .from("ranking_items")
@@ -196,7 +209,8 @@ export async function renderRankingVideos() {
         })
       );
 
-      const artistName = oneOf(ranking.artists)?.name ?? "";
+      const artist = oneOf(ranking.artists);
+      const artistName = artist?.name ?? "";
 
       await withRetry(() =>
         renderRankingCountdown(
@@ -218,6 +232,8 @@ export async function renderRankingVideos() {
             introText: ranking.intro_on_screen_text,
             introVoSrc: introVoSignedUrl,
             introDurationInSeconds: ranking.intro_vo_duration_seconds,
+            introAvatarUrl: artist?.avatar_url ?? null,
+            introBgLoopSrc: bgLoopSigned.signedUrl,
             segments,
           },
           outputPath
