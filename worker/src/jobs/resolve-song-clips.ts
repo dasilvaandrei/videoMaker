@@ -17,7 +17,14 @@ import { supabase } from "../lib/supabase.js";
 // across all of them (one download per song, not per ranking) — so the
 // "how long to display" decision has to live at render time, per
 // ranking_item, not baked into the download itself.
-const CLIP_WINDOW_SECONDS = 9.5;
+//
+// 11.5s (up from 9.5s) — TikTok's algorithm reportedly favors videos in
+// the 61-65s range, so every song's on-screen display grew by 2s to
+// land the total there (see STANDARD_DISPLAY_SECONDS). Only affects
+// clips resolved from here on — existing cached song_clips keep their
+// shorter downloaded window until whatever re-download flow reaches
+// them (there isn't an automatic one).
+const CLIP_WINDOW_SECONDS = 11.5;
 const SKIP_INTRO_FRACTION = 0.3;
 const SKIP_OUTRO_FRACTION = 0.15;
 

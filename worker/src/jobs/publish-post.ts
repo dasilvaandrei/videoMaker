@@ -33,6 +33,10 @@ const PRIVACY_STATUS =
 interface EligibleVideo {
   id: string;
   storage_path: string | null;
+  // Set by render-ranking-videos.ts only when the TikTok-length master
+  // (61-65s, past YouTube Shorts' <60s limit) needed trimming — null
+  // means the master already fit, so storage_path itself is used below.
+  youtube_storage_path: string | null;
   title: string | null;
   caption: string | null;
   hashtags: string[] | null;
@@ -86,7 +90,7 @@ export async function publishApprovedClips(options: PublishOptions = {}): Promis
 
   const { data: videos, error: videosError } = await supabase
     .from("ranking_videos")
-    .select("id, storage_path, title, caption, hashtags, created_at")
+    .select("id, storage_path, youtube_storage_path, title, caption, hashtags, created_at")
     .eq("render_status", "ready")
     .order("created_at", { ascending: true })
     .returns<EligibleVideo[]>();
@@ -125,9 +129,13 @@ export async function publishApprovedClips(options: PublishOptions = {}): Promis
     if (insertError) throw insertError;
 
     try {
+      // Prefer the YouTube-trimmed cut (under Shorts' 60s limit) when
+      // one exists — see render-ranking-videos.ts. Falls back to the
+      // TikTok-length master for a video that already fit under 60s
+      // without trimming.
       const { data: signed, error: signError } = await supabase.storage
         .from(MEDIA_BUCKET)
-        .createSignedUrl(video.storage_path!, SIGNED_URL_TTL_SECONDS);
+        .createSignedUrl(video.youtube_storage_path ?? video.storage_path!, SIGNED_URL_TTL_SECONDS);
       if (signError) throw signError;
 
       const videoRes = await fetch(signed.signedUrl);

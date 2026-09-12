@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderRankingCountdown, type AspectRatio } from "../remotion/render.js";
 import { FOLLOW_POPUP_SECONDS } from "../remotion/RankingCountdown.js";
+import { probeDurationSeconds, trimToMaxDuration } from "../lib/ffmpeg.js";
 import { supabase } from "../lib/supabase.js";
 
 const MEDIA_BUCKET = "media";
@@ -19,7 +20,17 @@ const SIGNED_URL_TTL_SECONDS = 60 * 30;
 // varies the on-screen length per ranking: rank 1 in *this* ranking gets
 // the full downloaded clip; every other rank is capped down to the
 // standard length, even if the underlying clip has more available.
-const STANDARD_DISPLAY_SECONDS = 7.5;
+//
+// 9.5s (up from 7.5s) — kept in sync with resolve-song-clips.ts's
+// CLIP_WINDOW_SECONDS bump; see that file's comment for why (TikTok's
+// 61-65s sweet spot). This pushes the total past YouTube Shorts' <60s
+// limit, which is what youtubeTrimSeconds below is for.
+const STANDARD_DISPLAY_SECONDS = 9.5;
+// YouTube Shorts requires under 60s — rather than a second render
+// pipeline, the master render (TikTok-length) gets ffmpeg-trimmed down
+// to this ceiling for the YouTube-specific copy when it runs over. 59s,
+// not 59.9s, for encode/rounding margin under the hard 60s cutoff.
+const YOUTUBE_MAX_SECONDS = 59;
 // Synthesized once (a two-tone chime, not a licensed sound), uploaded to
 // this fixed path — every render just signs a fresh URL for the same file.
 const RANK_DING_PATH = "sfx/rank-ding.mp3";
@@ -265,9 +276,28 @@ export async function renderRankingVideos() {
         .upload(objectPath, fileBuffer, { contentType: "video/mp4", upsert: true });
       if (uploadError) throw uploadError;
 
+      // The master render targets TikTok's 61-65s sweet spot, which runs
+      // over YouTube Shorts' <60s limit — rather than a second render
+      // pipeline, ffmpeg-trim a YouTube-specific copy off the same
+      // master when that happens. null (not a duplicate upload) when the
+      // master already fits, which publish-post.ts's storage_path
+      // fallback handles.
+      let youtubeObjectPath: string | null = null;
+      const masterDurationSeconds = await probeDurationSeconds(outputPath);
+      if (masterDurationSeconds != null && masterDurationSeconds > YOUTUBE_MAX_SECONDS) {
+        const trimmedPath = join(dir, "output-youtube.mp4");
+        await trimToMaxDuration(outputPath, trimmedPath, YOUTUBE_MAX_SECONDS);
+        youtubeObjectPath = `renders/${video.id}-youtube.mp4`;
+        const trimmedBuffer = await readFile(trimmedPath);
+        const { error: youtubeUploadError } = await supabase.storage
+          .from(MEDIA_BUCKET)
+          .upload(youtubeObjectPath, trimmedBuffer, { contentType: "video/mp4", upsert: true });
+        if (youtubeUploadError) throw youtubeUploadError;
+      }
+
       const { error: readyError } = await supabase
         .from("ranking_videos")
-        .update({ storage_path: objectPath, render_status: "ready" })
+        .update({ storage_path: objectPath, youtube_storage_path: youtubeObjectPath, render_status: "ready" })
         .eq("id", video.id);
       if (readyError) throw readyError;
 
