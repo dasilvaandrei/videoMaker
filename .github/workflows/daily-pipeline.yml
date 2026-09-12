@@ -45,6 +45,15 @@ jobs:
       - name: Install yt-dlp
         run: pip install -U yt-dlp
 
+      # worker/package.json's job scripts all pass Node's --env-file=../.env
+      # now (so local runs load the repo's .env without needing every
+      # var hand-exported first) — Node hard-errors if that file doesn't
+      # exist at all, so this just needs to be present, not populated:
+      # every real value here comes from the env: block below, which
+      # already wins in process.env before this file would even be read.
+      - name: Create empty .env for --env-file
+        run: touch .env
+
       - name: Run daily pipeline
         working-directory: worker
         env:
