@@ -109,3 +109,63 @@ export async function refreshLongLivedToken(longLivedToken: string): Promise<Lon
   }
   return { accessToken: body.access_token, expiresIn: body.expires_in };
 }
+
+const GRAPH_BASE = "https://graph.instagram.com";
+
+// Step 1 of 2 — posts as a Reel (share_to_feed also surfaces it in the
+// main feed grid, not just the Reels tab). Instagram's servers fetch the
+// video FROM this URL themselves (like TikTok's PULL_FROM_URL) rather
+// than accepting a file upload, so videoUrl must be a real public URL a
+// server can reach — a Supabase signed URL works as long as its TTL
+// outlives however long Instagram takes to fetch and process it.
+export async function createMediaContainer(
+  igUserId: string,
+  accessToken: string,
+  videoUrl: string,
+  caption: string
+): Promise<string> {
+  const params = new URLSearchParams({
+    media_type: "REELS",
+    video_url: videoUrl,
+    caption,
+    share_to_feed: "true",
+    access_token: accessToken,
+  });
+  const res = await fetch(`${GRAPH_BASE}/${igUserId}/media`, { method: "POST", body: params });
+  const body = await res.json();
+  if (!res.ok || !body.id) {
+    throw new Error(`Instagram media container creation failed: ${res.status} ${JSON.stringify(body)}`);
+  }
+  return body.id;
+}
+
+export type ContainerStatus = "EXPIRED" | "ERROR" | "FINISHED" | "IN_PROGRESS" | "PUBLISHED";
+
+export async function getContainerStatus(
+  containerId: string,
+  accessToken: string
+): Promise<{ status: ContainerStatus; statusDetail?: string }> {
+  const params = new URLSearchParams({ fields: "status_code,status", access_token: accessToken });
+  const res = await fetch(`${GRAPH_BASE}/${containerId}?${params.toString()}`);
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(`Instagram container status check failed: ${res.status} ${JSON.stringify(body)}`);
+  }
+  return { status: body.status_code, statusDetail: body.status };
+}
+
+// Step 2 of 2 — the container must be status_code=FINISHED (video fully
+// processed server-side) before this succeeds; see getContainerStatus.
+export async function publishMediaContainer(
+  igUserId: string,
+  accessToken: string,
+  containerId: string
+): Promise<string> {
+  const params = new URLSearchParams({ creation_id: containerId, access_token: accessToken });
+  const res = await fetch(`${GRAPH_BASE}/${igUserId}/media_publish`, { method: "POST", body: params });
+  const body = await res.json();
+  if (!res.ok || !body.id) {
+    throw new Error(`Instagram media publish failed: ${res.status} ${JSON.stringify(body)}`);
+  }
+  return body.id;
+}
