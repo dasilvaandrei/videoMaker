@@ -7,6 +7,7 @@
 
 import { loadArtistRoster } from "../config/artists.js";
 import { getArtistTopTracks } from "../lib/lastfm.js";
+import { dedupeByNormalizedTitle } from "../lib/songTitle.js";
 import { supabase } from "../lib/supabase.js";
 
 function todayLabel(): string {
@@ -32,8 +33,22 @@ export async function fetchLastfmRankings(onlyArtistNames?: string[]) {
       .single();
     if (artistError) throw artistError;
 
-    const tracks = await getArtistTopTracks(artistConfig.name);
-    const top5 = tracks.slice(0, 5);
+    // Fetch a bigger pool than 5 — Last.fm often lists the same song
+    // twice (e.g. "Levitating" and "Levitating (feat. DaBaby)"), so
+    // there needs to be a 6th+ candidate to promote after deduping.
+    //
+    // Last.fm's response order is NOT strictly sorted by playcount (it's
+    // some internal popularity score) — sorting explicitly here before
+    // deduping matters twice over: it makes "the first occurrence of a
+    // normalized title" actually mean "the higher-playcount one" instead
+    // of whichever happened to come first in the API's own order, and it
+    // makes the assigned rank (index + 1 below) actually match the
+    // displayed playcount instead of occasionally showing a lower
+    // playcount ranked above a higher one.
+    const tracks = await getArtistTopTracks(artistConfig.name, 15);
+    const sortedByPlaycount = [...tracks].sort((a, b) => b.playcount - a.playcount);
+    const deduped = dedupeByNormalizedTitle(sortedByPlaycount, (t) => t.name);
+    const top5 = deduped.slice(0, 5);
     if (top5.length < 5) {
       console.warn(`${artistConfig.name}: only ${top5.length} Last.fm top tracks returned, skipping`);
       continue;

@@ -10,6 +10,7 @@
 
 import { loadArtistRoster } from "../config/artists.js";
 import { getChannelVideoIds, getVideosInfo, searchOfficialChannel } from "../lib/youtube.js";
+import { dedupeByNormalizedTitle } from "../lib/songTitle.js";
 import { supabase } from "../lib/supabase.js";
 
 const EXCLUDED_TITLE_PATTERN = /\b(interview|reaction|live stream|livestream|shorts|behind the scenes)\b/i;
@@ -54,10 +55,14 @@ export async function fetchYoutubeRankings(onlyArtistNames?: string[]) {
 
     const videoIds = await getChannelVideoIds(channelId, 50);
     const videos = await getVideosInfo(videoIds);
-    const top5 = videos
+    const eligible = videos
       .filter((v) => v.durationSeconds >= MIN_DURATION_SECONDS && !EXCLUDED_TITLE_PATTERN.test(v.title))
-      .sort((a, b) => b.viewCount - a.viewCount)
-      .slice(0, 5);
+      .sort((a, b) => b.viewCount - a.viewCount);
+    // A channel often uploads the same song multiple times (official
+    // video, visualiser, official audio) — dedupe by normalized title so
+    // a ranking doesn't show the same song's clip twice under different
+    // upload labels.
+    const top5 = dedupeByNormalizedTitle(eligible, (v) => v.title).slice(0, 5);
 
     if (top5.length < 5) {
       console.warn(`${artistConfig.name}: only ${top5.length} eligible YouTube videos found, skipping`);
