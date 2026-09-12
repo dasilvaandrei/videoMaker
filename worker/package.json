@@ -18,6 +18,7 @@
     "render-channel-branding": "tsx --env-file=../.env src/jobs/render-channel-branding.ts",
     "expand-artist-roster": "tsx --env-file=../.env src/jobs/expand-artist-roster.ts",
     "youtube-oauth-bootstrap": "tsx --env-file=../.env src/jobs/youtube-oauth-bootstrap.ts",
+    "instagram-oauth-bootstrap": "tsx --env-file=../.env src/jobs/instagram-oauth-bootstrap.ts",
     "tiktok-oauth-bootstrap": "tsx --env-file=../.env src/jobs/tiktok-oauth-bootstrap.ts",
     "tiktok-upload-test": "tsx --env-file=../.env src/jobs/tiktok-upload-test.ts",
     "publish-tiktok": "tsx --env-file=../.env src/jobs/publish-tiktok.ts",
