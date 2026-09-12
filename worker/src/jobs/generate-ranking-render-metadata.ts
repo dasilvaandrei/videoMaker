@@ -125,6 +125,7 @@ interface DraftRanking {
   id: string;
   source: string;
   note: string | null;
+  intro_vo_storage_path: string | null;
   artists: { id: string; name: string } | { id: string; name: string }[] | null;
 }
 
@@ -153,12 +154,17 @@ export async function generateRankingRenderMetadata() {
 
   const { data: draftRankings, error } = await supabase
     .from("rankings")
-    .select("id, source, note, artists(id, name)")
+    .select("id, source, note, intro_vo_storage_path, artists(id, name)")
     .eq("status", "draft")
     .returns<DraftRanking[]>();
   if (error) throw error;
 
   for (const ranking of draftRankings ?? []) {
+    // generate-intro-vo.ts runs against the same "all clips downloaded"
+    // gate below and fills this in — a video shouldn't queue for render
+    // without its intro hook line ready.
+    if (!ranking.intro_vo_storage_path) continue;
+
     const { data: items, error: itemsError } = await supabase
       .from("ranking_items")
       .select("songs(song_clips(status))")

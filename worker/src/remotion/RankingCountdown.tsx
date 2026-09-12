@@ -1,12 +1,15 @@
-// The countdown composition every ranking video goes through: starts
-// immediately on song #5 (no separate intro scene) under a persistent,
-// multi-color title header, with a "scoreboard" sidebar (see
-// ScoreboardSidebar) that fills in with each song's title as it's
-// revealed and keeps every prior one visible — by the final segment the
-// whole board is lit up. Visual language (gradient scrim, Anton/Inter
-// fonts, freeze-on-last-frame for a clean auto-thumbnail) carried over
-// from the old HighlightClip.tsx, which this composition replaces now
-// that a "render" means 5 clips stitched together, not one.
+// The countdown composition every ranking video goes through: a brief
+// spoken-hook intro (see IntroHook — reintroduced specifically to carry
+// the ElevenLabs intro voiceover; the video used to start immediately on
+// song #5 with no intro scene at all, before VO came back), then the
+// persistent, multi-color title header for the rest of the video, with a
+// "scoreboard" sidebar (see ScoreboardSidebar) that fills in with each
+// song's title as it's revealed and keeps every prior one visible — by
+// the final segment the whole board is lit up. Visual language (gradient
+// scrim, Anton/Inter fonts, freeze-on-last-frame for a clean
+// auto-thumbnail) carried over from the old HighlightClip.tsx, which
+// this composition replaces now that a "render" means 5 clips stitched
+// together, not one.
 
 import {
   AbsoluteFill,
@@ -54,6 +57,14 @@ export type RankingCountdownProps = {
   // scoreboard's rank-advance pattern interrupt). Optional so the
   // composition still works without it (e.g. Studio preview).
   sfxSrc?: string;
+  // Bold hook text shown during the intro (e.g. "THE NUMBERS DON'T LIE"),
+  // spoken by introVoSrc — see generate-intro-vo.ts for where both come
+  // from. null/undefined skips the intro scene entirely (e.g. an older
+  // ranking generated before this feature, or a Studio preview with no
+  // VO wired up).
+  introText?: string | null;
+  introVoSrc?: string | null;
+  introDurationInSeconds?: number | null;
   // Ordered 5 -> 1, i.e. playback order (the reveal builds to #1).
   segments: RankingSegmentData[];
 };
@@ -110,6 +121,79 @@ const FollowPopup: React.FC<{ frame: number }> = ({ frame }) => {
           }}
         >
           for more 👉
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Small trailing buffer after the VO line finishes, before cutting to
+// song #5 — keeps the cut from feeling like it's stepping on the last
+// word.
+export const INTRO_BUFFER_SECONDS = 0.4;
+// Floor for the intro's on-screen time even if a VO duration is missing
+// (shouldn't happen for a real render — generate-intro-vo.ts always sets
+// one — but keeps Studio previews sane without it).
+const INTRO_FALLBACK_SECONDS = 2.5;
+
+export function introDurationInSeconds(vo?: number | null): number {
+  return (vo ?? INTRO_FALLBACK_SECONDS - INTRO_BUFFER_SECONDS) + INTRO_BUFFER_SECONDS;
+}
+
+// Spoken-hook intro (see generate-intro-vo.ts) — bold pop-in hook text
+// over a plain dark background, no song footage yet, artist's own
+// ScoreboardSidebar shown all-dim/upcoming to foreshadow the countdown
+// (reuses ScoreboardSidebar with a sentinel activeRank of 6, i.e. "before
+// #5", so every real rank 1-5 reads as not-yet-revealed).
+const IntroHook: React.FC<{
+  artistName: string;
+  sourceBadge: string;
+  introText: string;
+  introVoSrc?: string | null;
+  segments: RankingSegmentData[];
+}> = ({ artistName, sourceBadge, introText, introVoSrc, segments }) => {
+  const frame = useCurrentFrame();
+  const { fps, width } = useVideoConfig();
+
+  const scale = spring({ frame, fps, config: { damping: 10, stiffness: 160, mass: 0.6 } });
+  const opacity = interpolate(frame, [0, 5], [0, 1], { extrapolateRight: "clamp" });
+
+  return (
+    <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
+      {introVoSrc && <Audio src={introVoSrc} />}
+      <Header artistName={artistName} sourceBadge={sourceBadge} disclaimer={null} />
+      <ScoreboardSidebar activeRank={6} segments={segments} />
+      {/* A plain positioned div, not AbsoluteFill — AbsoluteFill forces
+          height: 100% alongside its default top/bottom: 0, so overriding
+          just `top` here left `height: 100%` in place too, pushing this
+          whole box (and its vertically-centered content) far below the
+          visible canvas instead of into the lower third of it. */}
+      <div
+        style={{
+          position: "absolute",
+          top: "62%",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <div
+          style={{
+            transform: `scale(${scale})`,
+            opacity,
+            fontFamily: rankFontFamily,
+            fontSize: width * 0.078,
+            color: "white",
+            WebkitTextStroke: "4px black",
+            textAlign: "center",
+            lineHeight: 1.05,
+            padding: `0 ${width * 0.08}px`,
+          }}
+        >
+          {introText}
         </div>
       </div>
     </AbsoluteFill>
@@ -335,12 +419,26 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
   sourceBadge,
   disclaimer,
   sfxSrc,
+  introText,
+  introVoSrc,
+  introDurationInSeconds: introVoSeconds,
   segments,
 }) => {
   const { fps } = useVideoConfig();
 
   return (
     <Series>
+      {introText && (
+        <Series.Sequence durationInFrames={Math.round(introDurationInSeconds(introVoSeconds) * fps)}>
+          <IntroHook
+            artistName={artistName}
+            sourceBadge={sourceBadge}
+            introText={introText}
+            introVoSrc={introVoSrc}
+            segments={segments}
+          />
+        </Series.Sequence>
+      )}
       {segments.map((segment, index) => {
         const isLast = index === segments.length - 1;
         const durationInFrames = Math.round(segmentDurationInSeconds(segment) * fps) + (isLast ? 15 : 0);

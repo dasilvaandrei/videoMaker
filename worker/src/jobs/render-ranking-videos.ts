@@ -66,6 +66,10 @@ interface RankingItemRow {
 
 interface RankingRow {
   source: string;
+  intro_script: string | null;
+  intro_on_screen_text: string | null;
+  intro_vo_storage_path: string | null;
+  intro_vo_duration_seconds: number | null;
   artists: { name: string } | { name: string }[] | null;
 }
 
@@ -120,10 +124,19 @@ export async function renderRankingVideos() {
     try {
       const { data: ranking, error: rankingError } = await supabase
         .from("rankings")
-        .select("source, artists(name)")
+        .select("source, intro_script, intro_on_screen_text, intro_vo_storage_path, intro_vo_duration_seconds, artists(name)")
         .eq("id", video.ranking_id)
         .single<RankingRow>();
       if (rankingError) throw rankingError;
+
+      let introVoSignedUrl: string | null = null;
+      if (ranking.intro_vo_storage_path) {
+        const { data: introSigned, error: introSignError } = await supabase.storage
+          .from(MEDIA_BUCKET)
+          .createSignedUrl(ranking.intro_vo_storage_path, SIGNED_URL_TTL_SECONDS);
+        if (introSignError) throw introSignError;
+        introVoSignedUrl = introSigned.signedUrl;
+      }
 
       const { data: items, error: itemsError } = await supabase
         .from("ranking_items")
@@ -202,6 +215,9 @@ export async function renderRankingVideos() {
             // Header's {disclaimer && ...} check, so it actually suppresses.
             disclaimer: ranking.source === "personal" ? null : FEATURE_DISCLAIMER,
             sfxSrc: sfxSigned.signedUrl,
+            introText: ranking.intro_on_screen_text,
+            introVoSrc: introVoSignedUrl,
+            introDurationInSeconds: ranking.intro_vo_duration_seconds,
             segments,
           },
           outputPath

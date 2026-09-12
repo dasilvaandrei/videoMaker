@@ -26,6 +26,7 @@ import { fetchYoutubeRankings } from "./fetch-youtube-rankings.js";
 import { syncPersonalRankings } from "./sync-personal-rankings.js";
 import { resolveSongClips } from "./resolve-song-clips.js";
 import { downloadSongClips } from "./download-song-clips.js";
+import { generateIntroVo } from "./generate-intro-vo.js";
 import { generateRankingRenderMetadata } from "./generate-ranking-render-metadata.js";
 import { renderRankingVideos } from "./render-ranking-videos.js";
 import { publishApprovedClips } from "./publish-post.js";
@@ -123,6 +124,7 @@ export async function runDailyPipeline() {
 
   await resolveSongClips();
   await downloadSongClips();
+  await generateIntroVo();
   await generateRankingRenderMetadata();
   await renderRankingVideos();
   await autoApproveReadyVideos();

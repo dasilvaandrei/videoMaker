@@ -58,6 +58,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_SHEETS_API_KEY: ${{ secrets.GOOGLE_SHEETS_API_KEY }}
           PERSONAL_RANKINGS_SHEET_ID: ${{ secrets.PERSONAL_RANKINGS_SHEET_ID }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
           # Confirmed against the real account that public uploads are
           # honored (not silently downgraded) before wiring this up —
           # see the actualPrivacyStatus check in publish-post.ts.

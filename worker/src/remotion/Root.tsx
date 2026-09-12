@@ -7,7 +7,12 @@
 
 import type { CalculateMetadataFunction } from "remotion";
 import { Composition, Folder } from "remotion";
-import { RankingCountdown, segmentDurationInSeconds, type RankingCountdownProps } from "./RankingCountdown.js";
+import {
+  RankingCountdown,
+  segmentDurationInSeconds,
+  introDurationInSeconds,
+  type RankingCountdownProps,
+} from "./RankingCountdown.js";
 import { ChannelIcon } from "./ChannelIcon.js";
 import { ChannelBanner } from "./ChannelBanner.js";
 
@@ -32,8 +37,9 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) =>
     const isLast = index === props.segments.length - 1;
     return sum + Math.round(segmentDurationInSeconds(segment) * FPS) + (isLast ? FREEZE_FRAMES : 0);
   }, 0);
+  const introFrames = props.introText ? Math.round(introDurationInSeconds(props.introDurationInSeconds) * FPS) : 0;
   return {
-    durationInFrames: Math.max(1, segmentFrames),
+    durationInFrames: Math.max(1, introFrames + segmentFrames),
   };
 };
 
@@ -49,6 +55,9 @@ const defaultProps: Props = {
   // source now, but keeping this accurate too so a Studio preview never
   // shows something the real pipeline wouldn't.
   disclaimer: "Primary artist credit only",
+  introText: "THE NUMBERS DON'T LIE 📊",
+  introVoSrc: null,
+  introDurationInSeconds: null,
   segments: [5, 4, 3, 2, 1].map((rank) => ({
     videoSrc: "",
     rank,

@@ -8,6 +8,7 @@
     "fetch-youtube-rankings": "tsx src/jobs/fetch-youtube-rankings.ts",
     "resolve-song-clips": "tsx src/jobs/resolve-song-clips.ts",
     "download-song-clips": "tsx src/jobs/download-song-clips.ts",
+    "generate-intro-vo": "tsx src/jobs/generate-intro-vo.ts",
     "sync-personal-rankings": "tsx src/jobs/sync-personal-rankings.ts",
     "generate-ranking-render-metadata": "tsx src/jobs/generate-ranking-render-metadata.ts",
     "render-ranking-videos": "tsx src/jobs/render-ranking-videos.ts",
