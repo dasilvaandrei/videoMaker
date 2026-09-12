@@ -180,6 +180,12 @@ export function sponsorDurationInSeconds(voSeconds: number): number {
 // AbsoluteFill's default `height: 100%` once already pushed a whole
 // block invisibly off-canvas, so this composition avoids that pattern
 // everywhere now.
+// Faint under the VO, purely to give the viewer a taste of the song
+// before it properly starts on segment #5 — loud enough to register as
+// "there's music" for attention-grabbing, quiet enough not to compete
+// with or muddy the spoken hook.
+const INTRO_BACKGROUND_SONG_VOLUME = 0.15;
+
 const IntroHook: React.FC<{
   artistName: string;
   sourceBadge: string;
@@ -187,7 +193,8 @@ const IntroHook: React.FC<{
   introVoSrc?: string | null;
   introAvatarUrl?: string | null;
   introBgLoopSrc?: string | null;
-}> = ({ artistName, sourceBadge, introText, introVoSrc, introAvatarUrl, introBgLoopSrc }) => {
+  backgroundSongSrc?: string | null;
+}> = ({ artistName, sourceBadge, introText, introVoSrc, introAvatarUrl, introBgLoopSrc, backgroundSongSrc }) => {
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
 
@@ -197,6 +204,7 @@ const IntroHook: React.FC<{
   return (
     <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
       {introVoSrc && <Audio src={introVoSrc} />}
+      {backgroundSongSrc && <Audio src={backgroundSongSrc} volume={INTRO_BACKGROUND_SONG_VOLUME} />}
 
       {/* Top half — artist photo, or a plain dark gradient if none resolved. */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "50%", overflow: "hidden" }}>
@@ -690,6 +698,7 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
             introVoSrc={introVoSrc}
             introAvatarUrl={introAvatarUrl}
             introBgLoopSrc={introBgLoopSrc}
+            backgroundSongSrc={segments[0]?.videoSrc}
           />
         </Series.Sequence>
       )}
