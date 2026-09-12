@@ -30,7 +30,7 @@ import { generateIntroVo } from "./generate-intro-vo.js";
 import { generateRankingRenderMetadata } from "./generate-ranking-render-metadata.js";
 import { renderRankingVideos } from "./render-ranking-videos.js";
 import { publishApprovedClips } from "./publish-post.js";
-import { publishToTiktok } from "./publish-tiktok.js";
+import { publishToTiktokInbox } from "./publish-tiktok-inbox.js";
 import { supabase } from "../lib/supabase.js";
 
 function daysSinceEpoch(): number {
@@ -131,21 +131,29 @@ export async function runDailyPipeline() {
   await autoApproveReadyVideos();
   const publishedCount = await publishApprovedClips({ limit: 1 });
 
+  // Sends to the TikTok inbox as a draft rather than posting live —
+  // Direct Post (video.publish) is currently hard-blocked for this
+  // unaudited app (confirmed in production:
+  // "unaudited_client_can_only_post_to_private_accounts", even when
+  // explicitly requesting SELF_ONLY), so this is the reliable fallback
+  // until TikTok's app review approves it. See publish-tiktok-inbox.ts's
+  // header for the manual tap-to-post step this still requires.
+  //
   // TikTok tracks its own posted-state independently (posts.platform_account_id),
-  // so this can post the SAME ranking_video that just went to YouTube
+  // so this can send the SAME ranking_video that just went to YouTube
   // above — that's intentional cross-posting, not a duplicate-detection
   // gap. Caught separately from the YouTube call: TikTok's refresh_token
   // can rotate (see lib/tiktok.ts) with no automated way yet to persist
   // a rotated value back to the GitHub secret, so a stale-token failure
   // here is expected to happen eventually and shouldn't take down
   // today's otherwise-successful YouTube publish.
-  let tiktokPublishedCount = 0;
+  let tiktokSentCount = 0;
   let tiktokError: unknown = null;
   try {
-    tiktokPublishedCount = await publishToTiktok({ limit: 1 });
+    tiktokSentCount = await publishToTiktokInbox({ limit: 1 });
   } catch (err) {
     tiktokError = err;
-    console.error("TikTok publish failed:", err instanceof Error ? err.message : err);
+    console.error("TikTok inbox send failed:", err instanceof Error ? err.message : err);
   }
 
   // A day that produces zero published videos on either platform means
@@ -159,9 +167,9 @@ export async function runDailyPipeline() {
   if (publishedCount === 0) {
     throw new Error("Daily pipeline produced zero published YouTube videos — see logs above for which step failed.");
   }
-  if (tiktokPublishedCount === 0) {
+  if (tiktokSentCount === 0) {
     throw new Error(
-      `Daily pipeline produced zero published TikTok videos${tiktokError ? `: ${tiktokError instanceof Error ? tiktokError.message : tiktokError}` : ""}`
+      `Daily pipeline sent zero videos to the TikTok inbox${tiktokError ? `: ${tiktokError instanceof Error ? tiktokError.message : tiktokError}` : ""}`
     );
   }
 
