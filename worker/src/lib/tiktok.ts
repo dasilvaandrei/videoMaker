@@ -197,18 +197,13 @@ export interface DirectPostOptions {
 // Post. Returns a publish_id — TikTok processes the post asynchronously,
 // so a genuinely public URL isn't available immediately; see
 // getPostStatus to poll for PUBLISH_COMPLETE and the real post id.
-export async function publishVideoDirect(
+async function initDirectPost(
   accessToken: string,
   videoBuffer: Buffer,
-  options: DirectPostOptions
-): Promise<string> {
-  const creatorInfo = await queryCreatorInfo(accessToken);
-  const privacyLevel = creatorInfo.privacyLevelOptions.includes("PUBLIC_TO_EVERYONE")
-    ? "PUBLIC_TO_EVERYONE"
-    : creatorInfo.privacyLevelOptions[0];
-  if (!privacyLevel) throw new Error("TikTok creator_info returned no privacy_level_options");
-
-  const initRes = await fetch(DIRECT_POST_INIT_URL, {
+  options: DirectPostOptions,
+  privacyLevel: string
+): Promise<{ ok: boolean; errorCode?: string; uploadUrl?: string; publishId?: string; raw: unknown }> {
+  const res = await fetch(DIRECT_POST_INIT_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -240,12 +235,51 @@ export async function publishVideoDirect(
       },
     }),
   });
-  const initBody = await initRes.json();
-  const uploadUrl = initBody?.data?.upload_url;
-  const publishId = initBody?.data?.publish_id;
-  if (!initRes.ok || !uploadUrl || !publishId) {
-    throw new Error(`TikTok direct post init failed: ${initRes.status} ${JSON.stringify(initBody)}`);
+  const body = await res.json();
+  return {
+    ok: res.ok && !!body?.data?.upload_url && !!body?.data?.publish_id,
+    errorCode: body?.error?.code,
+    uploadUrl: body?.data?.upload_url,
+    publishId: body?.data?.publish_id,
+    raw: body,
+  };
+}
+
+export async function publishVideoDirect(
+  accessToken: string,
+  videoBuffer: Buffer,
+  options: DirectPostOptions
+): Promise<string> {
+  const creatorInfo = await queryCreatorInfo(accessToken);
+  const preferredPrivacyLevel = creatorInfo.privacyLevelOptions.includes("PUBLIC_TO_EVERYONE")
+    ? "PUBLIC_TO_EVERYONE"
+    : creatorInfo.privacyLevelOptions[0];
+  if (!preferredPrivacyLevel) throw new Error("TikTok creator_info returned no privacy_level_options");
+
+  let result = await initDirectPost(accessToken, videoBuffer, options, preferredPrivacyLevel);
+
+  // creator_info's privacy_level_options is apparently not authoritative
+  // for what the actual init call enforces — confirmed for real in
+  // production: it listed PUBLIC_TO_EVERYONE as available, but the
+  // account is still genuinely being treated as unaudited by this
+  // endpoint specifically, which rejects it with this exact error code.
+  // Falling back to SELF_ONLY here — a private-but-successful post the
+  // operator can manually reshare — rather than failing the whole
+  // pipeline day over it. Once (if) TikTok's review actually approves
+  // the app, this error stops occurring and the preferred (public)
+  // attempt above just succeeds on the first try, no code change needed.
+  if (!result.ok && result.errorCode === "unaudited_client_can_only_post_to_private_accounts" && preferredPrivacyLevel !== "SELF_ONLY") {
+    console.warn(
+      "TikTok rejected PUBLIC_TO_EVERYONE despite creator_info listing it as available — falling back to SELF_ONLY (private) for this post."
+    );
+    result = await initDirectPost(accessToken, videoBuffer, options, "SELF_ONLY");
   }
+
+  if (!result.ok || !result.uploadUrl || !result.publishId) {
+    throw new Error(`TikTok direct post init failed: ${JSON.stringify(result.raw)}`);
+  }
+  const uploadUrl = result.uploadUrl;
+  const publishId = result.publishId;
 
   const putRes = await fetch(uploadUrl, {
     method: "PUT",
