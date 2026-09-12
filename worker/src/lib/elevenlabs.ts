@@ -20,7 +20,10 @@ export async function synthesizeSpeech(text: string): Promise<Buffer> {
     body: JSON.stringify({
       text,
       model_id: "eleven_multilingual_v2",
-      voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.6, use_speaker_boost: true },
+      // speed 1.15 — noticeably snappier delivery so the hook gets to
+      // the point faster, short of the 1.2 ceiling where it starts
+      // sounding rushed/unnatural.
+      voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.6, use_speaker_boost: true, speed: 1.15 },
     }),
   });
 
