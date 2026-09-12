@@ -64,7 +64,11 @@ jobs:
       # cookies file that would make yt-dlp worse off than passing
       # nothing.
       - name: Write YouTube cookies file (if configured)
-        if: ${{ secrets.YOUTUBE_COOKIES_TXT != '' }}
+        # The `secrets` context isn't allowed directly in a step's `if:`
+        # (actionlint: "context 'secrets' is not allowed here") — routing
+        # it through this step's own `env:` first and checking `env.X`
+        # instead is the standard workaround.
+        if: ${{ env.YOUTUBE_COOKIES_TXT != '' }}
         working-directory: worker
         env:
           YOUTUBE_COOKIES_TXT: ${{ secrets.YOUTUBE_COOKIES_TXT }}
