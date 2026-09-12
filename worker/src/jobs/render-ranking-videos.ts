@@ -8,7 +8,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderRankingCountdown, type AspectRatio } from "../remotion/render.js";
-import { FOLLOW_POPUP_SECONDS, sponsorDurationInSeconds } from "../remotion/RankingCountdown.js";
+import { FOLLOW_POPUP_SECONDS, introDurationInSeconds } from "../remotion/RankingCountdown.js";
 import { probeDurationSeconds, trimToMaxDuration } from "../lib/ffmpeg.js";
 import { SPONSORS } from "../config/sponsors.js";
 import { supabase } from "../lib/supabase.js";
@@ -27,9 +27,6 @@ const SIGNED_URL_TTL_SECONDS = 60 * 30;
 // 61-65s sweet spot). This pushes the total past YouTube Shorts' <60s
 // limit, which is what youtubeTrimSeconds below is for.
 const STANDARD_DISPLAY_SECONDS = 9.5;
-// Extra -1s applied to every rank except a sponsor-shrunk rank 3 (see
-// below) — clawing back some runtime the sponsor segment adds.
-const SONG_TRIM_SECONDS = 1;
 // YouTube Shorts requires under 60s — rather than a second render
 // pipeline, the master render (TikTok-length) gets ffmpeg-trimmed down
 // to this ceiling for the YouTube-specific copy when it runs over. 59s,
@@ -73,10 +70,6 @@ interface QueuedVideo {
   sponsor_name: string | null;
 }
 
-// Floor so a very long sponsor VO can't shrink rank 3 into an
-// unwatchably brief flash — if that ever actually triggers, the
-// sponsor's script is too long and should be rewritten shorter instead.
-const MIN_RANK_3_SECONDS = 5;
 
 interface ClipJoin {
   storage_path: string | null;
@@ -188,7 +181,6 @@ export async function renderRankingVideos() {
       let sponsorVoSignedUrl: string | null = null;
       let sponsorAssetSignedUrls: string[] = [];
       let sponsorBgLoopSignedUrl: string | null = null;
-      let sponsorSeconds = 0;
       if (sponsor?.voStoragePath && sponsor.assetStoragePaths.length > 0) {
         const { data: voSigned, error: voSignError } = await supabase.storage
           .from(MEDIA_BUCKET)
@@ -212,8 +204,6 @@ export async function renderRankingVideos() {
           .createSignedUrl(sponsorBgLoopPath, SIGNED_URL_TTL_SECONDS);
         if (sponsorBgLoopSignError) throw sponsorBgLoopSignError;
         sponsorBgLoopSignedUrl = sponsorBgLoopSigned.signedUrl;
-
-        sponsorSeconds = sponsorDurationInSeconds(sponsor.voDurationSeconds ?? 0);
       }
 
       const { data: items, error: itemsError } = await supabase
@@ -232,6 +222,17 @@ export async function renderRankingVideos() {
         .createSignedUrl(RANK_DING_PATH, SIGNED_URL_TTL_SECONDS);
       if (sfxSignError) throw sfxSignError;
 
+      // Rank 5's video shares the same downloaded clip file as the
+      // intro's continuous background audio (see RankingCountdown.tsx) —
+      // that audio plays from the file's start through the intro *and*
+      // into #5, so #5 can only show however much of the clip is left
+      // after the intro's own portion. Capping #5's on-screen length to
+      // match is what "cuts the clip off when the music stops" instead
+      // of running silent video after the shared file runs out.
+      const introSeconds = ranking.intro_vo_storage_path
+        ? introDurationInSeconds(ranking.intro_vo_duration_seconds)
+        : 0;
+
       const segments = await Promise.all(
         items.map(async (item) => {
           const song = oneOf(item.songs);
@@ -249,27 +250,21 @@ export async function renderRankingVideos() {
           // (see RankingCountdown.tsx), so the popup has real audio
           // playing under it instead of cutting to silence.
           //
-          // Rank 3 (the segment right after the sponsor spot) shrinks by
-          // the sponsor segment's own length when one's included — this
-          // is what keeps the total in TikTok's 61-65s target even with
-          // the extra segment, rather than just letting the video run
-          // longer. Floored at MIN_RANK_3_SECONDS so an unusually long
-          // sponsor VO can't compress it into an unwatchable flash.
-          //
-          // Every OTHER rank (1, 2, 4, 5, and 3 itself on a video with no
-          // sponsor at all) additionally trims SONG_TRIM_SECONDS off —
-          // explicit choice to claw back some of the runtime the sponsor
-          // segment adds, without cutting rank 3 twice on sponsor videos
-          // (it's already absorbing the sponsor's own length).
-          const isSponsoredRank3 = item.rank === 3 && sponsorSeconds > 0;
-          const targetSeconds = isSponsoredRank3
-            ? Math.max(MIN_RANK_3_SECONDS, STANDARD_DISPLAY_SECONDS - sponsorSeconds)
-            : item.rank === 1
-              ? fullClipDuration - SONG_TRIM_SECONDS
-              : item.rank === 2
-                ? STANDARD_DISPLAY_SECONDS - SONG_TRIM_SECONDS + FOLLOW_POPUP_SECONDS
-                : STANDARD_DISPLAY_SECONDS - SONG_TRIM_SECONDS;
-          const durationInSeconds = Math.min(fullClipDuration, targetSeconds);
+          // Rank 3 used to shrink to make room for the sponsor segment's
+          // own length, but that's no longer needed — it's back to the
+          // same standard length as ranks 2/4. The sponsor segment now
+          // adds its length on top of the total instead of being offset
+          // by a shorter rank 3, by explicit choice over cutting a song
+          // short to make room for an ad.
+          const targetSeconds =
+            item.rank === 5
+              ? fullClipDuration - introSeconds
+              : item.rank === 1
+                ? fullClipDuration
+                : item.rank === 2
+                  ? STANDARD_DISPLAY_SECONDS + FOLLOW_POPUP_SECONDS
+                  : STANDARD_DISPLAY_SECONDS;
+          const durationInSeconds = Math.max(0, Math.min(fullClipDuration, targetSeconds));
 
           // Last.fm's playcount only reflects its own small scrobbling
           // user base, not real-world stream totals — showing the raw
