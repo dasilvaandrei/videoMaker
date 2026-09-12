@@ -104,16 +104,21 @@ interface DraftRanking {
 
 // Split-screen's top half (see RankingCountdown.tsx's IntroHook) — the
 // artist's own channel photo, resolved once and cached like bio/
-// youtube_channel_id. Never throws: a missing photo just means the
-// intro falls back to a plain background for that half, not a broken
-// render.
+// youtube_channel_id. artists.avatar_url stores OUR OWN Storage path,
+// not YouTube's CDN URL directly: hotlinking yt3.ggpht.com straight into
+// Remotion's headless Chromium hit real rate limiting (HTTP 429 /
+// net::ERR_BLOCKED_BY_ORB) when many parallel render tabs requested the
+// same image at once, which crashed the whole render — the same reason
+// song clips get downloaded and re-hosted instead of hotlinked. Never
+// throws: a missing/failed photo just means the intro falls back to a
+// plain background for that half, not a broken render.
 async function getOrResolveAvatarUrl(
   artistId: string,
   artistName: string,
-  existingAvatarUrl: string | null,
+  existingAvatarPath: string | null,
   existingChannelId: string | null
 ): Promise<string | null> {
-  if (existingAvatarUrl) return existingAvatarUrl;
+  if (existingAvatarPath) return existingAvatarPath;
 
   try {
     let channelId = existingChannelId;
@@ -125,11 +130,21 @@ async function getOrResolveAvatarUrl(
     }
     if (!channelId) return null;
 
-    const avatarUrl = await getChannelThumbnailUrl(channelId);
-    if (!avatarUrl) return null;
+    const thumbnailUrl = await getChannelThumbnailUrl(channelId);
+    if (!thumbnailUrl) return null;
 
-    await supabase.from("artists").update({ avatar_url: avatarUrl }).eq("id", artistId);
-    return avatarUrl;
+    const imageRes = await fetch(thumbnailUrl);
+    if (!imageRes.ok) throw new Error(`fetching thumbnail failed: ${imageRes.status}`);
+    const imageBuffer = Buffer.from(await imageRes.arrayBuffer());
+
+    const objectPath = `avatars/${artistId}.jpg`;
+    const { error: uploadError } = await supabase.storage
+      .from(MEDIA_BUCKET)
+      .upload(objectPath, imageBuffer, { contentType: "image/jpeg", upsert: true });
+    if (uploadError) throw uploadError;
+
+    await supabase.from("artists").update({ avatar_url: objectPath }).eq("id", artistId);
+    return objectPath;
   } catch (err) {
     console.warn(`avatar resolution failed for ${artistName}:`, err instanceof Error ? err.message : err);
     return null;

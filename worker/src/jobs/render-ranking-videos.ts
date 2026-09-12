@@ -218,6 +218,18 @@ export async function renderRankingVideos() {
       const artist = oneOf(ranking.artists);
       const artistName = artist?.name ?? "";
 
+      // artists.avatar_url is our own Storage path (see generate-intro-vo.ts
+      // for why the raw YouTube CDN URL isn't hotlinked directly into the
+      // render), so it needs signing like every other asset here.
+      let introAvatarSignedUrl: string | null = null;
+      if (artist?.avatar_url) {
+        const { data: avatarSigned, error: avatarSignError } = await supabase.storage
+          .from(MEDIA_BUCKET)
+          .createSignedUrl(artist.avatar_url, SIGNED_URL_TTL_SECONDS);
+        if (avatarSignError) throw avatarSignError;
+        introAvatarSignedUrl = avatarSigned.signedUrl;
+      }
+
       await withRetry(() =>
         renderRankingCountdown(
           video.aspect_ratio,
@@ -238,7 +250,7 @@ export async function renderRankingVideos() {
             introText: ranking.intro_on_screen_text,
             introVoSrc: introVoSignedUrl,
             introDurationInSeconds: ranking.intro_vo_duration_seconds,
-            introAvatarUrl: artist?.avatar_url ?? null,
+            introAvatarUrl: introAvatarSignedUrl,
             introBgLoopSrc: bgLoopSigned.signedUrl,
             segments,
           },
