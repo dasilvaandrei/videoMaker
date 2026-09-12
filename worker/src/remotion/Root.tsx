@@ -11,6 +11,7 @@ import {
   RankingCountdown,
   segmentDurationInSeconds,
   introDurationInSeconds,
+  sponsorDurationInSeconds,
   type RankingCountdownProps,
 } from "./RankingCountdown.js";
 import { ChannelIcon } from "./ChannelIcon.js";
@@ -38,8 +39,12 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) =>
     return sum + Math.round(segmentDurationInSeconds(segment) * FPS) + (isLast ? FREEZE_FRAMES : 0);
   }, 0);
   const introFrames = props.introText ? Math.round(introDurationInSeconds(props.introDurationInSeconds) * FPS) : 0;
+  const sponsorFrames =
+    props.sponsorName && props.sponsorVoSrc
+      ? Math.round(sponsorDurationInSeconds(props.sponsorVoDurationSeconds ?? 0) * FPS)
+      : 0;
   return {
-    durationInFrames: Math.max(1, introFrames + segmentFrames),
+    durationInFrames: Math.max(1, introFrames + segmentFrames + sponsorFrames),
   };
 };
 
@@ -60,6 +65,13 @@ const defaultProps: Props = {
   introDurationInSeconds: null,
   introAvatarUrl: null,
   introBgLoopSrc: null,
+  sponsorName: null,
+  sponsorAffiliateUrl: null,
+  sponsorVoSrc: null,
+  sponsorVoDurationSeconds: null,
+  sponsorAssetUrl: null,
+  sponsorAssetType: null,
+  sponsorBgLoopSrc: null,
   segments: [5, 4, 3, 2, 1].map((rank) => ({
     videoSrc: "",
     rank,

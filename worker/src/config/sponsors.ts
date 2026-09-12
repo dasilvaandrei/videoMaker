@@ -1,0 +1,40 @@
+// Affiliate sponsor roster for the 2-5s split-screen ad segment (see
+// remotion/RankingCountdown.tsx's SponsorSegment, inserted after song
+// #4). Mirrors resolve-bg-loops.ts's pattern: a one-off job
+// (resolve-sponsor-assets.ts) resolves assetStoragePath/voStoragePath
+// and this file gets manually updated with the result — not a live DB
+// table, since sponsors change rarely and by hand (new affiliate
+// program approvals), same reasoning as config/artists.json.
+//
+// A sponsor is only ever selected (see generate-ranking-render-metadata.ts)
+// once BOTH assetStoragePath and voStoragePath are set — a sponsor with
+// no real creative asset yet is inert, not rendered with a placeholder.
+export interface Sponsor {
+  name: string;
+  affiliateUrl: string;
+  // Spoken during the segment — kept deliberately generic (no specific
+  // product claims) since accuracy of what the product actually does
+  // hasn't been confirmed; tighten once the operator provides real
+  // copy/features worth calling out.
+  script: string;
+  assetStoragePath: string | null;
+  assetType: "video" | "image" | null;
+  voStoragePath: string | null;
+  voDurationSeconds: number | null;
+}
+
+export const SPONSORS: Sponsor[] = [
+  {
+    name: "SongBox",
+    affiliateUrl: "https://songbox.com/?via=andrei",
+    script: "By the way — if you're into music like this, I've been using SongBox. I left the link in my bio if you want to check it out.",
+    assetStoragePath: null,
+    assetType: null,
+    voStoragePath: "sponsor-vo/songbox.mp3",
+    voDurationSeconds: 7.2,
+  },
+];
+
+export function activeSponsors(): Sponsor[] {
+  return SPONSORS.filter((s) => s.assetStoragePath && s.voStoragePath);
+}

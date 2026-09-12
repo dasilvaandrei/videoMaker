@@ -10,6 +10,7 @@
     "download-song-clips": "tsx --env-file=../.env src/jobs/download-song-clips.ts",
     "generate-intro-vo": "tsx --env-file=../.env src/jobs/generate-intro-vo.ts",
     "resolve-bg-loops": "tsx --env-file=../.env src/jobs/resolve-bg-loops.ts",
+    "resolve-sponsor-assets": "tsx --env-file=../.env src/jobs/resolve-sponsor-assets.ts",
     "sync-personal-rankings": "tsx --env-file=../.env src/jobs/sync-personal-rankings.ts",
     "generate-ranking-render-metadata": "tsx --env-file=../.env src/jobs/generate-ranking-render-metadata.ts",
     "render-ranking-videos": "tsx --env-file=../.env src/jobs/render-ranking-videos.ts",

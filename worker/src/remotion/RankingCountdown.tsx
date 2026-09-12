@@ -75,6 +75,16 @@ export type RankingCountdownProps = {
   introBgLoopSrc?: string | null;
   // Ordered 5 -> 1, i.e. playback order (the reveal builds to #1).
   segments: RankingSegmentData[];
+  // Affiliate sponsor segment (see config/sponsors.ts), inserted after
+  // song #4. null/undefined skips it entirely — no sponsor active yet,
+  // or this ranking's rotation didn't pick one.
+  sponsorName?: string | null;
+  sponsorAffiliateUrl?: string | null;
+  sponsorVoSrc?: string | null;
+  sponsorVoDurationSeconds?: number | null;
+  sponsorAssetUrl?: string | null;
+  sponsorAssetType?: "video" | "image" | null;
+  sponsorBgLoopSrc?: string | null;
 };
 
 export function segmentDurationInSeconds(segment: RankingSegmentData): number {
@@ -146,6 +156,16 @@ const INTRO_FALLBACK_SECONDS = 2.5;
 
 export function introDurationInSeconds(vo?: number | null): number {
   return (vo ?? INTRO_FALLBACK_SECONDS - INTRO_BUFFER_SECONDS) + INTRO_BUFFER_SECONDS;
+}
+
+// Slightly more trailing room than the intro's buffer — the sponsor
+// segment introduces an entirely new visual mid-video (unlike the
+// intro, which is the first thing seen), so it gets a beat longer to
+// register before cutting to song #3.
+export const SPONSOR_BUFFER_SECONDS = 0.6;
+
+export function sponsorDurationInSeconds(voSeconds: number): number {
+  return voSeconds + SPONSOR_BUFFER_SECONDS;
 }
 
 // Spoken-hook intro (see generate-intro-vo.ts) — the "split-screen
@@ -229,6 +249,120 @@ const IntroHook: React.FC<{
           }}
         >
           {introText}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Affiliate sponsor segment (see config/sponsors.ts) — same split-screen
+// language as IntroHook (recognizable content up top, kinetic B-roll
+// below) so it reads as a continuation of the video's visual style
+// rather than a jarring ad interruption. "AD" badge is a legal
+// requirement (FTC disclosure for affiliate content), not optional
+// polish — see generate-ranking-render-metadata.ts's caption disclosure
+// for the other half of that.
+const SponsorSegment: React.FC<{
+  sponsorName: string;
+  sponsorVoSrc: string;
+  sponsorAssetUrl?: string | null;
+  sponsorAssetType?: "video" | "image" | null;
+  sponsorBgLoopSrc?: string | null;
+}> = ({ sponsorName, sponsorVoSrc, sponsorAssetUrl, sponsorAssetType, sponsorBgLoopSrc }) => {
+  const frame = useCurrentFrame();
+  const { fps, width } = useVideoConfig();
+
+  const scale = spring({ frame, fps, config: { damping: 10, stiffness: 160, mass: 0.6 } });
+  const opacity = interpolate(frame, [0, 5], [0, 1], { extrapolateRight: "clamp" });
+
+  return (
+    <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
+      <Audio src={sponsorVoSrc} />
+
+      {/* Top half — the sponsor's own creative asset. */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "50%", overflow: "hidden" }}>
+        {sponsorAssetUrl && sponsorAssetType === "video" ? (
+          <OffthreadVideo src={sponsorAssetUrl} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : sponsorAssetUrl && sponsorAssetType === "image" ? (
+          <Img src={sponsorAssetUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <AbsoluteFill style={{ background: "linear-gradient(160deg, #1a1a1a 0%, #050505 100%)" }} />
+        )}
+        <AbsoluteFill
+          style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.1) 55%, rgba(0,0,0,0.55) 100%)" }}
+        />
+      </div>
+
+      {/* Bottom half — kinetic B-roll, same pool as the intro's. */}
+      <div style={{ position: "absolute", top: "50%", left: 0, right: 0, bottom: 0, overflow: "hidden" }}>
+        {sponsorBgLoopSrc ? (
+          <OffthreadVideo src={sponsorBgLoopSrc} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <AbsoluteFill style={{ background: "linear-gradient(200deg, #1a1a1a 0%, #050505 100%)" }} />
+        )}
+      </div>
+
+      {/* FTC disclosure — always visible, not tied to the pop-in animation. */}
+      <div
+        style={{
+          position: "absolute",
+          top: width * 0.04,
+          left: width * 0.04,
+          backgroundColor: "rgba(0,0,0,0.7)",
+          border: "2px solid white",
+          borderRadius: 6,
+          padding: `${width * 0.012}px ${width * 0.025}px`,
+          fontFamily: bodyFontFamily,
+          fontWeight: 700,
+          fontSize: width * 0.028,
+          color: "white",
+          letterSpacing: 1,
+        }}
+      >
+        AD
+      </div>
+
+      {/* Sponsor name + CTA banner, straddling the seam like IntroHook's hook text. */}
+      <div
+        style={{
+          position: "absolute",
+          top: "42%",
+          left: 0,
+          right: 0,
+          height: "16%",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "rgba(0,0,0,0.6)",
+        }}
+      >
+        <div
+          style={{
+            transform: `scale(${scale})`,
+            opacity,
+            fontFamily: rankFontFamily,
+            fontSize: width * 0.06,
+            color: "white",
+            WebkitTextStroke: "3px black",
+            textAlign: "center",
+            lineHeight: 1.05,
+          }}
+        >
+          {sponsorName}
+        </div>
+        <div
+          style={{
+            opacity,
+            fontFamily: bodyFontFamily,
+            fontWeight: 700,
+            fontSize: width * 0.032,
+            color: "#39FF14",
+            marginTop: 4,
+            textShadow: "0 2px 6px rgba(0,0,0,0.9)",
+          }}
+        >
+          LINK IN BIO 👆
         </div>
       </div>
     </AbsoluteFill>
@@ -460,8 +594,55 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
   introAvatarUrl,
   introBgLoopSrc,
   segments,
+  sponsorName,
+  sponsorVoSrc,
+  sponsorVoDurationSeconds,
+  sponsorAssetUrl,
+  sponsorAssetType,
+  sponsorBgLoopSrc,
 }) => {
   const { fps } = useVideoConfig();
+
+  const songSequences = segments.map((segment, index) => {
+    const isLast = index === segments.length - 1;
+    const durationInFrames = Math.round(segmentDurationInSeconds(segment) * fps) + (isLast ? 15 : 0);
+    return (
+      <Series.Sequence key={segment.rank} durationInFrames={durationInFrames}>
+        <RankingSegment
+          {...segment}
+          sfxSrc={sfxSrc}
+          artistName={artistName}
+          sourceBadge={sourceBadge}
+          disclaimer={disclaimer}
+          holdLastFrame={isLast}
+          allSegments={segments}
+        />
+      </Series.Sequence>
+    );
+  });
+
+  // Inserted after song #4 (index 2, i.e. after segments[0]=#5 and
+  // segments[1]=#4, before segments[2]=#3) — early enough to catch
+  // viewers before the drop-off point, without interrupting the #3->#1
+  // climax. render-ranking-videos.ts is responsible for shrinking #3's
+  // own duration to compensate, keeping the total in TikTok's 61-65s
+  // target even with this segment included.
+  if (sponsorName && sponsorVoSrc) {
+    const sponsorFrames = Math.round(sponsorDurationInSeconds(sponsorVoDurationSeconds ?? 0) * fps);
+    songSequences.splice(
+      2,
+      0,
+      <Series.Sequence key="sponsor" durationInFrames={sponsorFrames}>
+        <SponsorSegment
+          sponsorName={sponsorName}
+          sponsorVoSrc={sponsorVoSrc}
+          sponsorAssetUrl={sponsorAssetUrl}
+          sponsorAssetType={sponsorAssetType}
+          sponsorBgLoopSrc={sponsorBgLoopSrc}
+        />
+      </Series.Sequence>
+    );
+  }
 
   return (
     <Series>
@@ -477,23 +658,7 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
           />
         </Series.Sequence>
       )}
-      {segments.map((segment, index) => {
-        const isLast = index === segments.length - 1;
-        const durationInFrames = Math.round(segmentDurationInSeconds(segment) * fps) + (isLast ? 15 : 0);
-        return (
-          <Series.Sequence key={segment.rank} durationInFrames={durationInFrames}>
-            <RankingSegment
-              {...segment}
-              sfxSrc={sfxSrc}
-              artistName={artistName}
-              sourceBadge={sourceBadge}
-              disclaimer={disclaimer}
-              holdLastFrame={isLast}
-              allSegments={segments}
-            />
-          </Series.Sequence>
-        );
-      })}
+      {songSequences}
     </Series>
   );
 };

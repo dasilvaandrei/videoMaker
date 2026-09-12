@@ -6,6 +6,7 @@
 // copy programmatically.
 
 import { loadArtistRoster } from "../config/artists.js";
+import { activeSponsors, type Sponsor } from "../config/sponsors.js";
 import { generateText } from "../lib/anthropic.js";
 import { supabase } from "../lib/supabase.js";
 
@@ -100,6 +101,27 @@ function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
+// Deterministic per-ranking pick (same hash-rotation shape as
+// generate-intro-vo.ts's template picker) among sponsors that actually
+// have a real asset+VO ready (see config/sponsors.ts's activeSponsors) —
+// returns null (no sponsor segment at all) when none are active yet,
+// e.g. right now, before SongBox's creative asset is sourced.
+function pickSponsor(rankingId: string): Sponsor | null {
+  const sponsors = activeSponsors();
+  if (sponsors.length === 0) return null;
+  let hash = 0;
+  for (let i = 0; i < rankingId.length; i++) hash = (hash * 31 + rankingId.charCodeAt(i)) >>> 0;
+  return sponsors[hash % sponsors.length];
+}
+
+// FTC endorsement guidelines require clear affiliate-relationship
+// disclosure — this isn't optional styling. Kept as its own block (not
+// folded into the copyright line) so it stays legible even if someone
+// only skims the first/last lines of a long caption.
+function buildSponsorDisclosure(sponsor: Sponsor): string {
+  return `Contains affiliate links. #ad\nCheck out ${sponsor.name}: ${sponsor.affiliateUrl}`;
+}
+
 function buildTitle(artistName: string, source: string): string {
   if (source === "personal") {
     return `Ranking My Top 5 ${artistName} Songs 🔥 (Agree?)`;
@@ -111,14 +133,21 @@ function buildTitle(artistName: string, source: string): string {
 // then (bottom) where the ranking data and the video/song content are
 // credited from — the credit line is the actually copyright-relevant
 // part, so it stays last where captions conventionally put fine print.
-function buildCaption(artistName: string, bio: string, source: string, note: string | null): string {
+function buildCaption(
+  artistName: string,
+  bio: string,
+  source: string,
+  note: string | null,
+  sponsor: Sponsor | null
+): string {
+  const disclosure = sponsor ? `\n\n${buildSponsorDisclosure(sponsor)}` : "";
   if (source === "personal") {
     const base = `My ranking of ${artistName}'s best songs — let me know if you'd flip any of these.`;
     const middle = note ? `${base}\n\n${note}` : base;
-    return `${bio}\n\n${middle}\n\n${COPYRIGHT_CREDIT_LINE}`;
+    return `${bio}\n\n${middle}\n\n${COPYRIGHT_CREDIT_LINE}${disclosure}`;
   }
   const sourceLine = SOURCE_CAPTION_LINE[source] ?? "";
-  return `${bio}\n\n${artistName}'s top 5 songs right now, ranked 5 to 1.\n\n${sourceLine}\n${FEATURE_DISCLAIMER}\n\n${COPYRIGHT_CREDIT_LINE}`;
+  return `${bio}\n\n${artistName}'s top 5 songs right now, ranked 5 to 1.\n\n${sourceLine}\n${FEATURE_DISCLAIMER}\n\n${COPYRIGHT_CREDIT_LINE}${disclosure}`;
 }
 
 interface DraftRanking {
@@ -183,19 +212,22 @@ export async function generateRankingRenderMetadata() {
 
     const artistName = artistNameOf(ranking);
     const bio = await getOrGenerateBio(artistIdOf(ranking), artistName, staticBioByName.get(artistName));
+    const sponsor = pickSponsor(ranking.id);
     const { data: video, error: insertError } = await supabase
       .from("ranking_videos")
       .insert({
         ranking_id: ranking.id,
         aspect_ratio: "9:16",
         title: buildTitle(artistName, ranking.source),
-        caption: buildCaption(artistName, bio, ranking.source, ranking.note),
+        caption: buildCaption(artistName, bio, ranking.source, ranking.note, sponsor),
         hashtags: [...SOURCE_HASHTAGS[ranking.source], slug(artistName), "shorts"],
+        sponsor_name: sponsor?.name ?? null,
         render_status: "queued",
       })
       .select("id")
       .single();
     if (insertError) throw insertError;
+    if (sponsor) console.log(`${artistName}: including sponsor segment (${sponsor.name})`);
 
     // Flips the ranking out of the 'draft' query above, so re-running
     // this job never double-queues a ranking_video for the same ranking.

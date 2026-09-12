@@ -8,8 +8,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderRankingCountdown, type AspectRatio } from "../remotion/render.js";
-import { FOLLOW_POPUP_SECONDS } from "../remotion/RankingCountdown.js";
+import { FOLLOW_POPUP_SECONDS, sponsorDurationInSeconds } from "../remotion/RankingCountdown.js";
 import { probeDurationSeconds, trimToMaxDuration } from "../lib/ffmpeg.js";
+import { SPONSORS } from "../config/sponsors.js";
 import { supabase } from "../lib/supabase.js";
 
 const MEDIA_BUCKET = "media";
@@ -66,7 +67,13 @@ interface QueuedVideo {
   id: string;
   ranking_id: string;
   aspect_ratio: AspectRatio;
+  sponsor_name: string | null;
 }
+
+// Floor so a very long sponsor VO can't shrink rank 3 into an
+// unwatchably brief flash — if that ever actually triggers, the
+// sponsor's script is too long and should be rewritten shorter instead.
+const MIN_RANK_3_SECONDS = 5;
 
 interface ClipJoin {
   storage_path: string | null;
@@ -124,7 +131,7 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
 export async function renderRankingVideos() {
   const { data: videos, error } = await supabase
     .from("ranking_videos")
-    .select("id, ranking_id, aspect_ratio")
+    .select("id, ranking_id, aspect_ratio, sponsor_name")
     .eq("render_status", "queued")
     .returns<QueuedVideo[]>();
   if (error) throw error;
@@ -168,6 +175,40 @@ export async function renderRankingVideos() {
         .createSignedUrl(bgLoopPath, SIGNED_URL_TTL_SECONDS);
       if (bgLoopSignError) throw bgLoopSignError;
 
+      // Sponsor segment (see config/sponsors.ts) — video.sponsor_name was
+      // decided back in generate-ranking-render-metadata.ts (has to match
+      // whatever the caption's disclosure/affiliate link already say), so
+      // this just looks up and signs that sponsor's assets, it doesn't
+      // pick one. A different, separately-random bg-loop pick than the
+      // intro's, purely for visual variety between the two segments.
+      const sponsor = video.sponsor_name ? SPONSORS.find((s) => s.name === video.sponsor_name) ?? null : null;
+      let sponsorVoSignedUrl: string | null = null;
+      let sponsorAssetSignedUrl: string | null = null;
+      let sponsorBgLoopSignedUrl: string | null = null;
+      let sponsorSeconds = 0;
+      if (sponsor?.voStoragePath && sponsor.assetStoragePath) {
+        const { data: voSigned, error: voSignError } = await supabase.storage
+          .from(MEDIA_BUCKET)
+          .createSignedUrl(sponsor.voStoragePath, SIGNED_URL_TTL_SECONDS);
+        if (voSignError) throw voSignError;
+        sponsorVoSignedUrl = voSigned.signedUrl;
+
+        const { data: assetSigned, error: assetSignError } = await supabase.storage
+          .from(MEDIA_BUCKET)
+          .createSignedUrl(sponsor.assetStoragePath, SIGNED_URL_TTL_SECONDS);
+        if (assetSignError) throw assetSignError;
+        sponsorAssetSignedUrl = assetSigned.signedUrl;
+
+        const sponsorBgLoopPath = BG_LOOP_PATHS[Math.floor(Math.random() * BG_LOOP_PATHS.length)];
+        const { data: sponsorBgLoopSigned, error: sponsorBgLoopSignError } = await supabase.storage
+          .from(MEDIA_BUCKET)
+          .createSignedUrl(sponsorBgLoopPath, SIGNED_URL_TTL_SECONDS);
+        if (sponsorBgLoopSignError) throw sponsorBgLoopSignError;
+        sponsorBgLoopSignedUrl = sponsorBgLoopSigned.signedUrl;
+
+        sponsorSeconds = sponsorDurationInSeconds(sponsor.voDurationSeconds ?? 0);
+      }
+
       const { data: items, error: itemsError } = await supabase
         .from("ranking_items")
         .select("rank, metric_label, note, songs(title, song_clips(storage_path, start_seconds, end_seconds))")
@@ -200,12 +241,21 @@ export async function renderRankingVideos() {
           // extra stretch is what the follow-popup overlays on top of
           // (see RankingCountdown.tsx), so the popup has real audio
           // playing under it instead of cutting to silence.
+          //
+          // Rank 3 (the segment right after the sponsor spot) shrinks by
+          // the sponsor segment's own length when one's included — this
+          // is what keeps the total in TikTok's 61-65s target even with
+          // the extra segment, rather than just letting the video run
+          // longer. Floored at MIN_RANK_3_SECONDS so an unusually long
+          // sponsor VO can't compress it into an unwatchable flash.
           const targetSeconds =
             item.rank === 1
               ? fullClipDuration
               : item.rank === 2
                 ? STANDARD_DISPLAY_SECONDS + FOLLOW_POPUP_SECONDS
-                : STANDARD_DISPLAY_SECONDS;
+                : item.rank === 3 && sponsorSeconds > 0
+                  ? Math.max(MIN_RANK_3_SECONDS, STANDARD_DISPLAY_SECONDS - sponsorSeconds)
+                  : STANDARD_DISPLAY_SECONDS;
           const durationInSeconds = Math.min(fullClipDuration, targetSeconds);
 
           // Last.fm's playcount only reflects its own small scrobbling
@@ -263,6 +313,13 @@ export async function renderRankingVideos() {
             introDurationInSeconds: ranking.intro_vo_duration_seconds,
             introAvatarUrl: introAvatarSignedUrl,
             introBgLoopSrc: bgLoopSigned.signedUrl,
+            sponsorName: sponsorVoSignedUrl ? sponsor?.name ?? null : null,
+            sponsorAffiliateUrl: sponsor?.affiliateUrl ?? null,
+            sponsorVoSrc: sponsorVoSignedUrl,
+            sponsorVoDurationSeconds: sponsor?.voDurationSeconds ?? null,
+            sponsorAssetUrl: sponsorAssetSignedUrl,
+            sponsorAssetType: sponsor?.assetType ?? null,
+            sponsorBgLoopSrc: sponsorBgLoopSignedUrl,
             segments,
           },
           outputPath
