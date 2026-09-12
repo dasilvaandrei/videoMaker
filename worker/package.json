@@ -19,6 +19,7 @@
     "youtube-oauth-bootstrap": "tsx --env-file=../.env src/jobs/youtube-oauth-bootstrap.ts",
     "tiktok-oauth-bootstrap": "tsx --env-file=../.env src/jobs/tiktok-oauth-bootstrap.ts",
     "tiktok-upload-test": "tsx --env-file=../.env src/jobs/tiktok-upload-test.ts",
+    "publish-tiktok": "tsx --env-file=../.env src/jobs/publish-tiktok.ts",
     "publish-post": "tsx --env-file=../.env src/jobs/publish-post.ts",
     "remotion:studio": "remotion studio src/remotion/index.ts"
   },

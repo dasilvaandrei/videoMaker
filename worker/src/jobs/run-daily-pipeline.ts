@@ -30,6 +30,7 @@ import { generateIntroVo } from "./generate-intro-vo.js";
 import { generateRankingRenderMetadata } from "./generate-ranking-render-metadata.js";
 import { renderRankingVideos } from "./render-ranking-videos.js";
 import { publishApprovedClips } from "./publish-post.js";
+import { publishToTiktok } from "./publish-tiktok.js";
 import { supabase } from "../lib/supabase.js";
 
 function daysSinceEpoch(): number {
@@ -130,15 +131,38 @@ export async function runDailyPipeline() {
   await autoApproveReadyVideos();
   const publishedCount = await publishApprovedClips({ limit: 1 });
 
-  // A day that produces zero published videos means something upstream
-  // broke (a source API change, every clip download failing — see the
-  // Calvin Harris / yt-dlp "Sign in to confirm you're not a bot"
-  // incident this caught) — throwing here fails the GitHub Actions run,
-  // which triggers GitHub's own run-failure email, instead of every
-  // step's own try/catch silently swallowing the problem and this
-  // logging "complete" for a day that actually published nothing.
+  // TikTok tracks its own posted-state independently (posts.platform_account_id),
+  // so this can post the SAME ranking_video that just went to YouTube
+  // above — that's intentional cross-posting, not a duplicate-detection
+  // gap. Caught separately from the YouTube call: TikTok's refresh_token
+  // can rotate (see lib/tiktok.ts) with no automated way yet to persist
+  // a rotated value back to the GitHub secret, so a stale-token failure
+  // here is expected to happen eventually and shouldn't take down
+  // today's otherwise-successful YouTube publish.
+  let tiktokPublishedCount = 0;
+  let tiktokError: unknown = null;
+  try {
+    tiktokPublishedCount = await publishToTiktok({ limit: 1 });
+  } catch (err) {
+    tiktokError = err;
+    console.error("TikTok publish failed:", err instanceof Error ? err.message : err);
+  }
+
+  // A day that produces zero published videos on either platform means
+  // something broke (a source API change, every clip download failing —
+  // see the Calvin Harris / yt-dlp "Sign in to confirm you're not a bot"
+  // incident this caught, or a rotated TikTok token) — throwing here
+  // fails the GitHub Actions run, which triggers GitHub's own
+  // run-failure email, instead of every step's own try/catch silently
+  // swallowing the problem and this logging "complete" for a day that
+  // actually published nothing on that platform.
   if (publishedCount === 0) {
-    throw new Error("Daily pipeline produced zero published videos — see logs above for which step failed.");
+    throw new Error("Daily pipeline produced zero published YouTube videos — see logs above for which step failed.");
+  }
+  if (tiktokPublishedCount === 0) {
+    throw new Error(
+      `Daily pipeline produced zero published TikTok videos${tiktokError ? `: ${tiktokError instanceof Error ? tiktokError.message : tiktokError}` : ""}`
+    );
   }
 
   console.log("Daily pipeline complete.");

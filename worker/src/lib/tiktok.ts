@@ -1,16 +1,22 @@
-// TikTok Content Posting API — video.upload scope only. This uploads a
-// video as a draft into the authorized account's own TikTok inbox; it
-// never publishes live. That's a deliberate choice, not a limitation to
-// work around: the inbox-upload endpoint (used here) always lands as a
-// draft regardless of app review status, unlike Direct Post
-// (video.publish), which additionally forces private-only visibility
-// until the app passes TikTok's review. Since the account owner is
-// already going to tap "Post" themselves (see the project's publishing
-// policy for TikTok), there's no reason to chase the audited/direct-post
-// path at all right now.
+// TikTok Content Posting API — two upload paths:
+//   - uploadVideoToInbox (video.upload): lands as a draft in the
+//     account's own TikTok inbox, always, regardless of app review
+//     status — the account owner still taps "Post" themselves. This is
+//     what tiktok-upload-test.ts exercises manually.
+//   - publishVideoDirect (video.publish): posts straight to the
+//     account, no manual step, via Direct Post. TikTok's own docs say
+//     unaudited apps get forced to a restricted (private-only)
+//     privacy_level — in practice, this app/account combination already
+//     has PUBLIC_TO_EVERYONE available via queryCreatorInfo even before
+//     review completes (confirmed against the live API, not assumed).
+//     publishVideoDirect still reads the actually-available privacy
+//     levels rather than hardcoding one, both because that's what
+//     TikTok's docs require calling before every Direct Post, and as a
+//     safety net if that ever tightens back up.
 //
-// See jobs/tiktok-oauth-bootstrap.ts for the one-time manual login flow
-// and jobs/tiktok-upload-test.ts for exercising the upload end-to-end.
+// See jobs/tiktok-oauth-bootstrap.ts for the one-time manual login flow,
+// jobs/tiktok-upload-test.ts for exercising the inbox upload, and
+// jobs/publish-tiktok.ts for the Direct Post pipeline job.
 //
 // IMPORTANT — refresh token rotation: unlike Google's YOUTUBE_REFRESH_TOKEN
 // (stable indefinitely), TikTok's docs state the refresh_token returned
@@ -23,6 +29,9 @@
 const AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/";
 const TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/";
 const INBOX_UPLOAD_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/";
+const DIRECT_POST_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/";
+const CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/";
+const POST_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/";
 
 function clientKey(): string {
   const key = process.env.TIKTOK_CLIENT_KEY;
@@ -43,7 +52,7 @@ export function buildAuthorizationUrl(redirectUri: string, state: string): strin
   url.searchParams.set("client_key", clientKey());
   url.searchParams.set("response_type", "code");
   url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("scope", "user.info.basic,video.upload");
+  url.searchParams.set("scope", "user.info.basic,video.upload,video.publish");
   url.searchParams.set("state", state);
   return url.toString();
 }
@@ -144,4 +153,143 @@ export async function uploadVideoToInbox(accessToken: string, videoBuffer: Buffe
     const text = await putRes.text();
     throw new Error(`TikTok video chunk upload failed: ${putRes.status} ${text}`);
   }
+}
+
+export interface CreatorInfo {
+  privacyLevelOptions: string[];
+  maxVideoPostDurationSec: number;
+  commentDisabled: boolean;
+  duetDisabled: boolean;
+  stitchDisabled: boolean;
+}
+
+// TikTok's docs require calling this before every Direct Post — the
+// available privacy_level options genuinely vary per account/app-review
+// state (see the file header), not just a formality.
+export async function queryCreatorInfo(accessToken: string): Promise<CreatorInfo> {
+  const res = await fetch(CREATOR_INFO_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json; charset=UTF-8",
+    },
+  });
+  const body = await res.json();
+  if (!res.ok || !body?.data) {
+    throw new Error(`TikTok creator_info query failed: ${res.status} ${JSON.stringify(body)}`);
+  }
+  return {
+    privacyLevelOptions: body.data.privacy_level_options ?? [],
+    maxVideoPostDurationSec: body.data.max_video_post_duration_sec ?? 0,
+    commentDisabled: !!body.data.comment_disabled,
+    duetDisabled: !!body.data.duet_disabled,
+    stitchDisabled: !!body.data.stitch_disabled,
+  };
+}
+
+export interface DirectPostOptions {
+  title: string;
+  // Frame to use as the cover/thumbnail, in milliseconds into the video.
+  videoCoverTimestampMs?: number;
+}
+
+// Posts straight to the account (no manual "tap Post" step) via Direct
+// Post. Returns a publish_id — TikTok processes the post asynchronously,
+// so a genuinely public URL isn't available immediately; see
+// getPostStatus to poll for PUBLISH_COMPLETE and the real post id.
+export async function publishVideoDirect(
+  accessToken: string,
+  videoBuffer: Buffer,
+  options: DirectPostOptions
+): Promise<string> {
+  const creatorInfo = await queryCreatorInfo(accessToken);
+  const privacyLevel = creatorInfo.privacyLevelOptions.includes("PUBLIC_TO_EVERYONE")
+    ? "PUBLIC_TO_EVERYONE"
+    : creatorInfo.privacyLevelOptions[0];
+  if (!privacyLevel) throw new Error("TikTok creator_info returned no privacy_level_options");
+
+  const initRes = await fetch(DIRECT_POST_INIT_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json; charset=UTF-8",
+    },
+    body: JSON.stringify({
+      post_info: {
+        title: options.title,
+        privacy_level: privacyLevel,
+        disable_duet: false,
+        disable_comment: false,
+        disable_stitch: false,
+        // Deliberately not disclosed as AI-generated content — only the
+        // ~9s intro voiceover is synthetic (ElevenLabs TTS); the actual
+        // song footage is real official video and the ranking data is
+        // real playcounts/view counts, not AI-generated. A conscious
+        // choice, not an oversight — revisit if TikTok's AIGC policy
+        // scope changes.
+        is_aigc: false,
+        ...(options.videoCoverTimestampMs != null
+          ? { video_cover_timestamp_ms: options.videoCoverTimestampMs }
+          : {}),
+      },
+      source_info: {
+        source: "FILE_UPLOAD",
+        video_size: videoBuffer.length,
+        chunk_size: videoBuffer.length,
+        total_chunk_count: 1,
+      },
+    }),
+  });
+  const initBody = await initRes.json();
+  const uploadUrl = initBody?.data?.upload_url;
+  const publishId = initBody?.data?.publish_id;
+  if (!initRes.ok || !uploadUrl || !publishId) {
+    throw new Error(`TikTok direct post init failed: ${initRes.status} ${JSON.stringify(initBody)}`);
+  }
+
+  const putRes = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "video/mp4",
+      "Content-Length": String(videoBuffer.length),
+      "Content-Range": `bytes 0-${videoBuffer.length - 1}/${videoBuffer.length}`,
+    },
+    body: videoBuffer as unknown as BodyInit,
+  });
+  if (!putRes.ok) {
+    const text = await putRes.text();
+    throw new Error(`TikTok video chunk upload failed: ${putRes.status} ${text}`);
+  }
+
+  return publishId;
+}
+
+export interface PostStatus {
+  // PROCESSING_UPLOAD | PROCESSING_DOWNLOAD | SEND_TO_USER_INBOX |
+  // PUBLISH_COMPLETE | FAILED
+  status: string;
+  // Empty until status is PUBLISH_COMPLETE. Yes, "publicaly" — that's
+  // TikTok's actual (misspelled) field name, not a typo introduced here.
+  publiclyAvailablePostIds: string[];
+  failReason?: string;
+}
+
+export async function getPostStatus(accessToken: string, publishId: string): Promise<PostStatus> {
+  const res = await fetch(POST_STATUS_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json; charset=UTF-8",
+    },
+    body: JSON.stringify({ publish_id: publishId }),
+  });
+  const body = await res.json();
+  if (!res.ok || !body?.data) {
+    throw new Error(`TikTok post status fetch failed: ${res.status} ${JSON.stringify(body)}`);
+  }
+  return {
+    status: body.data.status,
+    publiclyAvailablePostIds: body.data.publicaly_available_post_id ?? [],
+    failReason: body.data.fail_reason,
+  };
 }

@@ -87,6 +87,15 @@ jobs:
           PERSONAL_RANKINGS_SHEET_ID: ${{ secrets.PERSONAL_RANKINGS_SHEET_ID }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          # Static secret, not auto-updated — see publish-tiktok.ts's
+          # comment on why a rotated refresh_token isn't persisted
+          # automatically yet. If TikTok rotates it, this run (and only
+          # the TikTok side of it) starts failing loudly until
+          # tiktok-oauth-bootstrap.ts is re-run by hand and this secret
+          # updated.
+          TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
           # Confirmed against the real account that public uploads are
           # honored (not silently downgraded) before wiring this up —
           # see the actualPrivacyStatus check in publish-post.ts.
