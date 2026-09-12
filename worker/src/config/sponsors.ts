@@ -28,11 +28,11 @@ export const SPONSORS: Sponsor[] = [
   {
     name: "SongBox",
     affiliateUrl: "https://songbox.com/?via=andrei",
-    script: "SongBox lets you share unreleased music privately, or sell straight to fans and keep 100% of the revenue. Get a 7 day free trial and save up to $108 a year on the Pro plan — link's in my bio.",
+    script: "SongBox — share unreleased music privately, or sell to fans and keep 100%. 7 day free trial, save up to $108 a year — link's in my bio.",
     assetStoragePaths: ["sponsor-assets/songbox-1.jpg", "sponsor-assets/songbox-2.png", "sponsor-assets/songbox-3.jpeg"],
     assetType: "image",
     voStoragePath: "sponsor-vo/songbox.mp3",
-    voDurationSeconds: 14.12,
+    voDurationSeconds: 11.33,
   },
 ];
 

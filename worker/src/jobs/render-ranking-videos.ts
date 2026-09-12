@@ -27,6 +27,9 @@ const SIGNED_URL_TTL_SECONDS = 60 * 30;
 // 61-65s sweet spot). This pushes the total past YouTube Shorts' <60s
 // limit, which is what youtubeTrimSeconds below is for.
 const STANDARD_DISPLAY_SECONDS = 9.5;
+// Extra -1s applied to every rank except a sponsor-shrunk rank 3 (see
+// below) — clawing back some runtime the sponsor segment adds.
+const SONG_TRIM_SECONDS = 1;
 // YouTube Shorts requires under 60s — rather than a second render
 // pipeline, the master render (TikTok-length) gets ffmpeg-trimmed down
 // to this ceiling for the YouTube-specific copy when it runs over. 59s,
@@ -252,14 +255,20 @@ export async function renderRankingVideos() {
           // the extra segment, rather than just letting the video run
           // longer. Floored at MIN_RANK_3_SECONDS so an unusually long
           // sponsor VO can't compress it into an unwatchable flash.
-          const targetSeconds =
-            item.rank === 1
-              ? fullClipDuration
+          //
+          // Every OTHER rank (1, 2, 4, 5, and 3 itself on a video with no
+          // sponsor at all) additionally trims SONG_TRIM_SECONDS off —
+          // explicit choice to claw back some of the runtime the sponsor
+          // segment adds, without cutting rank 3 twice on sponsor videos
+          // (it's already absorbing the sponsor's own length).
+          const isSponsoredRank3 = item.rank === 3 && sponsorSeconds > 0;
+          const targetSeconds = isSponsoredRank3
+            ? Math.max(MIN_RANK_3_SECONDS, STANDARD_DISPLAY_SECONDS - sponsorSeconds)
+            : item.rank === 1
+              ? fullClipDuration - SONG_TRIM_SECONDS
               : item.rank === 2
-                ? STANDARD_DISPLAY_SECONDS + FOLLOW_POPUP_SECONDS
-                : item.rank === 3 && sponsorSeconds > 0
-                  ? Math.max(MIN_RANK_3_SECONDS, STANDARD_DISPLAY_SECONDS - sponsorSeconds)
-                  : STANDARD_DISPLAY_SECONDS;
+                ? STANDARD_DISPLAY_SECONDS - SONG_TRIM_SECONDS + FOLLOW_POPUP_SECONDS
+                : STANDARD_DISPLAY_SECONDS - SONG_TRIM_SECONDS;
           const durationInSeconds = Math.min(fullClipDuration, targetSeconds);
 
           // Last.fm's playcount only reflects its own small scrobbling
