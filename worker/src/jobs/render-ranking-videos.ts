@@ -22,15 +22,26 @@ const SIGNED_URL_TTL_SECONDS = 60 * 30;
 // the full downloaded clip; every other rank is capped down to the
 // standard length, even if the underlying clip has more available.
 //
-// 9.5s (up from 7.5s) — kept in sync with resolve-song-clips.ts's
-// CLIP_WINDOW_SECONDS bump; see that file's comment for why (TikTok's
-// 61-65s sweet spot). This pushes the total past YouTube Shorts' <60s
-// limit, which is what youtubeTrimSeconds below is for.
-const STANDARD_DISPLAY_SECONDS = 9.5;
+// 10.9s (up from 9.5s) — kept in sync with resolve-song-clips.ts's
+// CLIP_WINDOW_SECONDS bump (exactly 2.0s below it, same margin as
+// before, so rank 2's STANDARD_DISPLAY_SECONDS + FOLLOW_POPUP_SECONDS
+// never exceeds the downloaded window and gets clamped down). With no
+// sponsor segment and rank 3 no longer shrunk for one, every rank's
+// duration is a hard upper bound on the master's total length (every
+// clamp in the per-rank math below can only ever reduce a segment below
+// its theoretical max, never exceed it) — so this value was picked by
+// solving total = 2*CLIP_WINDOW_SECONDS + 3*STANDARD_DISPLAY_SECONDS +
+// FOLLOW_POPUP_SECONDS + (0.5s trailing hold) for a target just above
+// 60s and comfortably under 61s (the intro's own length cancels out of
+// that formula, since rank 5's on-screen time is the shared clip minus
+// however much the intro already consumed). This pushes the total just
+// over YouTube Shorts' <60s limit, which is what the ffmpeg trim below
+// is for — by design now just a small trim, not several seconds off.
+const STANDARD_DISPLAY_SECONDS = 10.9;
 // YouTube Shorts requires under 60s — rather than a second render
-// pipeline, the master render (TikTok-length) gets ffmpeg-trimmed down
-// to this ceiling for the YouTube-specific copy when it runs over. 59s,
-// not 59.9s, for encode/rounding margin under the hard 60s cutoff.
+// pipeline, the master render gets ffmpeg-trimmed down to this ceiling
+// for the YouTube-specific copy when it runs over. 59s, not 59.9s, for
+// encode/rounding margin under the hard 60s cutoff.
 const YOUTUBE_MAX_SECONDS = 59;
 // Synthesized once (a two-tone chime, not a licensed sound), uploaded to
 // this fixed path — every render just signs a fresh URL for the same file.
@@ -341,12 +352,14 @@ export async function renderRankingVideos() {
         .upload(objectPath, fileBuffer, { contentType: "video/mp4", upsert: true });
       if (uploadError) throw uploadError;
 
-      // The master render targets TikTok's 61-65s sweet spot, which runs
-      // over YouTube Shorts' <60s limit — rather than a second render
-      // pipeline, ffmpeg-trim a YouTube-specific copy off the same
-      // master when that happens. null (not a duplicate upload) when the
-      // master already fits, which publish-post.ts's storage_path
-      // fallback handles.
+      // The master render now targets just-above-60s (see
+      // STANDARD_DISPLAY_SECONDS's derivation), which still runs over
+      // YouTube Shorts' <60s limit by design — rather than a second
+      // render pipeline, ffmpeg-trim a YouTube-specific copy off the
+      // same master when that happens (now just a small trim, not
+      // several seconds). null (not a duplicate upload) when the master
+      // already fits, which publish-post.ts's storage_path fallback
+      // handles.
       let youtubeObjectPath: string | null = null;
       const masterDurationSeconds = await probeDurationSeconds(outputPath);
       if (masterDurationSeconds != null && masterDurationSeconds > YOUTUBE_MAX_SECONDS) {

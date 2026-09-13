@@ -18,13 +18,21 @@ import { supabase } from "../lib/supabase.js";
 // "how long to display" decision has to live at render time, per
 // ranking_item, not baked into the download itself.
 //
-// 11.5s (up from 9.5s) — TikTok's algorithm reportedly favors videos in
-// the 61-65s range, so every song's on-screen display grew by 2s to
-// land the total there (see STANDARD_DISPLAY_SECONDS). Only affects
+// 12.9s (up from 11.5s) — now that the sponsor segment is off (see
+// config/sponsors.ts's SPONSOR_SEGMENT_ENABLED) and rank 3 isn't shrunk
+// for it either, the master render landed around 53-54s, well short of
+// "just above 60s." Bumped so the total (see STANDARD_DISPLAY_SECONDS's
+// derivation) lands just above 60s and under 61s by construction, close
+// enough to YouTube Shorts' <60s limit that render-ranking-videos.ts's
+// existing ffmpeg trim only has to chop off a second or so, not several
+// seconds. Kept exactly 2.0s above STANDARD_DISPLAY_SECONDS, same margin
+// as the prior bump, so rank 2's extra follow-popup stretch still fits
+// inside the downloaded window without being clamped. Only affects
 // clips resolved from here on — existing cached song_clips keep their
 // shorter downloaded window until whatever re-download flow reaches
-// them (there isn't an automatic one).
-const CLIP_WINDOW_SECONDS = 11.5;
+// them (there isn't an automatic one; the user explicitly said not to
+// worry about already-downloaded clips).
+const CLIP_WINDOW_SECONDS = 12.9;
 const SKIP_INTRO_FRACTION = 0.3;
 const SKIP_OUTRO_FRACTION = 0.15;
 

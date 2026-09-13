@@ -36,6 +36,14 @@ export const SPONSORS: Sponsor[] = [
   },
 ];
 
+// Off switch for the sponsor segment: turns the ad off in every video
+// without touching the roster, the SponsorSegment component, or the
+// resolve/pickSponsor plumbing — flip back to true to bring it back.
+// Turned off because the mid-video ad interrupts the video's flow more
+// than the affiliate revenue is worth right now.
+const SPONSOR_SEGMENT_ENABLED = false;
+
 export function activeSponsors(): Sponsor[] {
+  if (!SPONSOR_SEGMENT_ENABLED) return [];
   return SPONSORS.filter((s) => s.assetStoragePaths.length > 0 && s.voStoragePath);
 }
