@@ -1,18 +1,27 @@
-// Single entry point for the daily cron. Each day:
+// Single entry point for the cron, which now fires 4x/day (see
+// daily-pipeline.yml). Each run:
 //   1. Sync the personal-picks Google Form, then check for a submission
-//      that's never been published yet — if one exists, that's today's
-//      video (personal picks take priority over the automated rotation).
+//      that's never been published yet — if one exists, that's this
+//      run's video (personal picks take priority over the automated
+//      rotation).
 //   2. Otherwise, deterministically pick one (artist, source) pair from
-//      the roster based on today's date.
+//      the roster based on the current 6-hour period — see
+//      rotationPeriodsSinceEpoch() below. One pair per period (not per
+//      day) so each of the 4 daily runs renders a genuinely new video
+//      instead of the 2nd-4th run of the day finding nothing new queued
+//      and just draining the publish backlog (which would eventually
+//      run dry and start failing the "zero published" check below).
 // Either way, the result runs through the entire pipeline — resolve
 // clips -> download -> render -> auto-approve -> publish — unattended,
 // end to end.
 //
 // The automated rotation cycles through every (artist, source)
 // combination before repeating, rather than fetching/rendering the whole
-// roster every day — that would be the entire roster's worth of
-// renders/downloads per day for a channel that only posts one video a
-// day, almost all of it wasted.
+// roster every period — that would be the entire roster's worth of
+// renders/downloads per period for a channel that only posts one video
+// per period, almost all of it wasted. The roster (15k+ artists) is
+// large enough that even at 4 picks/day this doesn't meaningfully
+// shorten how often a given artist repeats.
 //
 // Auto-approve exists because the review-gate trigger normally requires
 // a human review_decisions row before a post can be created — a
@@ -33,8 +42,12 @@ import { publishApprovedClips } from "./publish-post.js";
 import { publishToTiktokInbox } from "./publish-tiktok-inbox.js";
 import { supabase } from "../lib/supabase.js";
 
-function daysSinceEpoch(): number {
-  return Math.floor(Date.now() / 86_400_000);
+// 6 hours, matching daily-pipeline.yml's 4x/day cron spacing — one
+// rotation step per scheduled run, not per calendar day.
+const ROTATION_PERIOD_MS = 6 * 60 * 60 * 1000;
+
+function rotationPeriodsSinceEpoch(): number {
+  return Math.floor(Date.now() / ROTATION_PERIOD_MS);
 }
 
 // "Not already used" = no ranking_video for this personal ranking has
@@ -105,7 +118,7 @@ export async function runDailyPipeline() {
     const roster = loadArtistRoster();
     if (roster.length === 0) throw new Error("artists.json is empty — add at least one artist");
 
-    const pairIndex = daysSinceEpoch() % (roster.length * 2);
+    const pairIndex = rotationPeriodsSinceEpoch() % (roster.length * 2);
     const artistIndex = Math.floor(pairIndex / 2);
     const wantsYoutube = pairIndex % 2 === 1;
     const artist = roster[artistIndex];

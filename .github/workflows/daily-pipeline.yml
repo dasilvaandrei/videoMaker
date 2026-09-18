@@ -1,20 +1,22 @@
 name: Daily ranking video pipeline
 
-# Fully automated, once a day: picks one (artist, source) pair from
-# worker/src/config/artists.json (see run-daily-pipeline.ts for the
-# rotation logic), fetches its ranking, resolves + downloads clips,
+# Fully automated, 4x/day (one per 6-hour period, evenly spaced around a
+# full 24-hour clock rather than confined to daytime): picks one (artist,
+# source) pair from worker/src/config/artists.json (see
+# run-daily-pipeline.ts's rotationPeriodsSinceEpoch() for the rotation
+# logic — one pick per 6-hour period, not per day, so each run renders a
+# genuinely new video), fetches its ranking, resolves + downloads clips,
 # renders the countdown video, auto-approves it, and publishes to
 # YouTube — no human review step, by explicit choice (see
 # run-daily-pipeline.ts's comment for how to add a review gate back).
 #
 # GitHub Actions cron is UTC-only and doesn't shift for daylight saving,
 # so this is a fixed EST (UTC-5) offset — during EDT (roughly
-# March-November) the actual run time drifts an hour later on the wall
-# clock (4pm ET instead of 3pm). Adjust the cron line by ±1 hour across
-# the DST boundary if that hour matters.
+# March-November) actual run times drift an hour later on the wall clock.
+# Adjust the cron line by ±1 hour across the DST boundary if that matters.
 on:
   schedule:
-    - cron: "0 20 * * *" # 3:00 PM EST / 4:00 PM EDT
+    - cron: "0 5,11,17,23 * * *" # 12am/6am/12pm/6pm EST (UTC 5,11,17,23)
   workflow_dispatch: {} # manual trigger, e.g. to catch up after a gap
 
 jobs:
