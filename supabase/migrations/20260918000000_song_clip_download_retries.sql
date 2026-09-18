@@ -1,0 +1,14 @@
+-- Bounded automatic retry for song_clips downloads — previously a single
+-- yt-dlp failure (transient bot-detection block, network blip) put a
+-- clip in 'failed' forever, since download-song-clips.ts only ever
+-- queried status='pending'. That silently wedged any ranking depending
+-- on it (see run-daily-pipeline.ts's hasUnrecoverableClipFailure), which
+-- is exactly what happened 2026-09-16/18 when the YOUTUBE_COOKIES_TXT
+-- secret expired and every download in two rankings' worth of clips hit
+-- "Sign in to confirm you're not a bot."
+--
+-- download_attempts counts real attempts made so far; download-song-clips.ts
+-- now sends a failed clip back to 'pending' (instead of 'failed') while
+-- under the retry ceiling, and only marks it 'failed' for good once that
+-- ceiling is hit.
+alter table song_clips add column download_attempts integer not null default 0;

@@ -11,10 +11,22 @@ import { supabase } from "../lib/supabase.js";
 
 const MEDIA_BUCKET = "media";
 
+// A failure gets this many total attempts (across separate pipeline
+// runs, hours apart — see daily-pipeline.yml's 6h cadence, which already
+// gives a real gap for something transient like a bot-detection block or
+// expired cookies to get fixed) before it's given up on for good. Below
+// the ceiling it goes back to 'pending' instead of 'failed', so
+// download-song-clips.ts's own query (status='pending') naturally picks
+// it back up next run — no separate retry queue needed. See
+// run-daily-pipeline.ts's hasUnrecoverableClipFailure for what happens
+// once a clip is genuinely 'failed': that ranking gets skipped rather
+// than wedging the whole pipeline the way an un-retried failure used to.
+const MAX_DOWNLOAD_ATTEMPTS = 3;
+
 export async function downloadSongClips() {
   const { data: pending, error } = await supabase
     .from("song_clips")
-    .select("id, youtube_video_id, start_seconds, end_seconds")
+    .select("id, youtube_video_id, start_seconds, end_seconds, download_attempts")
     .eq("status", "pending");
   if (error) throw error;
 
@@ -43,9 +55,19 @@ export async function downloadSongClips() {
       console.log(`downloaded song_clip ${clip.id} -> ${objectPath}`);
     } catch (err) {
       // One bad download (age-restricted/removed video, transient
-      // network error) shouldn't take down the rest of the batch.
-      console.error(`song_clip ${clip.id} failed:`, err instanceof Error ? err.message : err);
-      await supabase.from("song_clips").update({ status: "failed" }).eq("id", clip.id);
+      // network error) shouldn't take down the rest of the batch. Stays
+      // retryable ('pending') until MAX_DOWNLOAD_ATTEMPTS is actually
+      // hit, rather than giving up after the very first failure.
+      const attempts = (clip.download_attempts ?? 0) + 1;
+      const giveUp = attempts >= MAX_DOWNLOAD_ATTEMPTS;
+      console.error(
+        `song_clip ${clip.id} failed (attempt ${attempts}/${MAX_DOWNLOAD_ATTEMPTS}${giveUp ? ", giving up" : ", will retry"}):`,
+        err instanceof Error ? err.message : err
+      );
+      await supabase
+        .from("song_clips")
+        .update({ status: giveUp ? "failed" : "pending", download_attempts: attempts })
+        .eq("id", clip.id);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
