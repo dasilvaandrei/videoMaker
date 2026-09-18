@@ -50,12 +50,45 @@ function rotationPeriodsSinceEpoch(): number {
   return Math.floor(Date.now() / ROTATION_PERIOD_MS);
 }
 
+// A ranking whose song_clips include even one permanently 'failed' entry
+// can never reach render_status='ready' — generate-intro-vo.ts and
+// generate-ranking-render-metadata.ts both gate on *all* items being
+// 'downloaded', and download-song-clips.ts only ever retries clips still
+// in 'pending' (a 'failed' one is a dead end, not a queue). Discovered
+// live: 2026-09-18, two personal rankings back-to-back (Paulo Londra,
+// Sebastian Yatra) both had all 5 clips fail on the same run (likely a
+// transient yt-dlp bot-detection block) and, since findUnusedPersonalRankingId
+// always returns the oldest unused personal ranking first with no escape
+// hatch, permanently wedged the entire pipeline — every run, of any
+// cadence, kept re-picking the same stuck ranking and publishing zero
+// videos. Filtering these out here just skips to the next personal
+// ranking (or falls through to the automated rotation) instead.
+async function hasUnrecoverableClipFailure(rankingId: string): Promise<boolean> {
+  const { data: items, error } = await supabase
+    .from("ranking_items")
+    .select("songs(song_clips(status))")
+    .eq("ranking_id", rankingId)
+    .returns<{ songs: { song_clips: { status: string } | { status: string }[] | null } | null }[]>();
+  if (error) throw error;
+
+  return (items ?? []).some((item) => {
+    const clip = item.songs
+      ? Array.isArray(item.songs.song_clips)
+        ? item.songs.song_clips[0]
+        : item.songs.song_clips
+      : null;
+    return clip?.status === "failed";
+  });
+}
+
 // "Not already used" = no ranking_video for this personal ranking has
 // ever actually been published. Covers both a brand-new form submission
 // (no ranking_video yet at all) and one that was rendered on a previous
 // run but never made it to a published post for some reason (a failed
 // publish attempt, an interrupted run, etc.) — either way it's fair game
-// to pick up again rather than silently skipping it forever.
+// to pick up again rather than silently skipping it forever. Skips (does
+// not return) a ranking that can never progress due to a permanently
+// failed clip — see hasUnrecoverableClipFailure above.
 async function findUnusedPersonalRankingId(): Promise<string | null> {
   const { data: personalRankings, error } = await supabase
     .from("rankings")
@@ -72,7 +105,10 @@ async function findUnusedPersonalRankingId(): Promise<string | null> {
     if (videosError) throw videosError;
 
     const videoIds = (videos ?? []).map((v) => v.id as string);
-    if (videoIds.length === 0) return ranking.id as string; // never even rendered
+    if (videoIds.length === 0) {
+      if (await hasUnrecoverableClipFailure(ranking.id as string)) continue;
+      return ranking.id as string; // never even rendered
+    }
 
     const { data: published, error: publishedError } = await supabase
       .from("posts")
