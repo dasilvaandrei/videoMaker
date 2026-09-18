@@ -44,16 +44,19 @@ jobs:
             libgbm-dev libcups2 libcairo2 libpango-1.0-0 libatk-bridge2.0-0 \
             ffmpeg
 
+      # [default] extras pulls in yt-dlp-ejs, the actual challenge-solver
+      # scripts — a bare `pip install yt-dlp` omits it, which left
+      # Deno (below) with nothing to run and every download failing with
+      # "Signature solving failed" even once a JS runtime existed.
       - name: Install yt-dlp
-        run: pip install -U yt-dlp
+        run: pip install -U "yt-dlp[default]"
 
-      # yt-dlp needs a JS runtime to solve YouTube's signature/"n
-      # challenge" (unrelated to the cookies file above — this was
-      # masked behind "cookies are no longer valid" failures until those
-      # got fixed, at which point every download started failing with
-      # "Signature solving failed... Ensure you have a supported
-      # JavaScript runtime" instead). yt-dlp looks for `deno` by default;
-      # see --js-runtimes if that ever needs to point at something else.
+      # yt-dlp needs a JS runtime to execute yt-dlp-ejs's challenge
+      # solver against YouTube's signature/"n challenge" (unrelated to
+      # the cookies file above — this was masked behind "cookies are no
+      # longer valid" failures until those got fixed). yt-dlp looks for
+      # `deno` by default; see --js-runtimes if that ever needs to point
+      # at something else.
       - uses: denoland/setup-deno@v2.0.5
 
       # worker/package.json's job scripts all pass Node's --env-file=../.env
