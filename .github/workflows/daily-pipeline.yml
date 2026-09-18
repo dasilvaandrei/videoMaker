@@ -54,7 +54,7 @@ jobs:
       # "Signature solving failed... Ensure you have a supported
       # JavaScript runtime" instead). yt-dlp looks for `deno` by default;
       # see --js-runtimes if that ever needs to point at something else.
-      - uses: denoland/setup-deno@v4
+      - uses: denoland/setup-deno@v2.0.5
 
       # worker/package.json's job scripts all pass Node's --env-file=../.env
       # now (so local runs load the repo's .env without needing every
