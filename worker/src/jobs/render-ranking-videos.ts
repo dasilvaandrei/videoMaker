@@ -49,14 +49,11 @@ const RANK_DING_PATH = "sfx/rank-ding.mp3";
 // Small, fixed library of "satisfying" B-roll loops for the intro's
 // split-screen bottom half — see jobs/resolve-bg-loops.ts for how these
 // were sourced (CC-licensed, not the same Content ID risk tradeoff as
-// the artist clips) and how to refresh this list.
-const BG_LOOP_PATHS = [
-  "bg-loops/kinetic-sand.mp4",
-  "bg-loops/3d-render-loop.mp4",
-  "bg-loops/satisfying-loop.mp4",
-  "bg-loops/minecraft-parkour.mp4",
-  "bg-loops/gta5-megaramp.mp4",
-];
+// the artist clips) and how to refresh this list. Restricted to
+// Minecraft/GTA5 gameplay per operator request — kinetic-sand,
+// 3d-render-loop, and satisfying-loop stay uploaded in storage (in case
+// this list needs to widen again later) but are no longer picked.
+const BG_LOOP_PATHS = ["bg-loops/minecraft-parkour.mp4", "bg-loops/gta5-megaramp.mp4"];
 
 // No on-screen badge for Last.fm — "LAST.FM" reads as unfamiliar jargon
 // to a casual viewer (the source is named in the caption instead).
