@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS LaunchAgent — runs refresh-youtube-cookies.sh every 2 hours in
+     the operator's own login session (needed for Keychain access to
+     Chrome's cookie store). Installed by copying (not symlinking, so an
+     `rm` here doesn't reach into ~/Library) to
+     ~/Library/LaunchAgents/com.videomaker.refresh-youtube-cookies.plist
+     and loading with:
+       launchctl load ~/Library/LaunchAgents/com.videomaker.refresh-youtube-cookies.plist
+     To stop it:
+       launchctl unload ~/Library/LaunchAgents/com.videomaker.refresh-youtube-cookies.plist
+     Logs: /tmp/refresh-youtube-cookies.stdout.log and .stderr.log (also
+     see refresh-youtube-cookies.sh's own /tmp/refresh-youtube-cookies.last.log
+     on failure). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.videomaker.refresh-youtube-cookies</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/andreidasilva/Projects/videoMaker/scripts/refresh-youtube-cookies.sh</string>
+  </array>
+
+  <!-- Runs on load (covers "the Mac was asleep/off past a scheduled
+       tick") and then every 7200s (2h) thereafter. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>7200</integer>
+
+  <!-- homebrew's bin dir (yt-dlp, gh) isn't on launchd's minimal
+       default PATH the way it is in an interactive shell. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/refresh-youtube-cookies.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/refresh-youtube-cookies.stderr.log</string>
+</dict>
+</plist>
