@@ -19,7 +19,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { getTopArtistsByTag } from "../lib/lastfm.js";
+import { getArtistListeners, getTopArtistsByTag } from "../lib/lastfm.js";
 import type { ArtistConfig } from "../config/artists.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -76,9 +76,26 @@ const GENRE_TAGS = [
   "alternative",
 ];
 
-const PAGES_PER_TAG = 10;
+const PAGES_PER_TAG = 10; // 10 pages x 50/page = up to 500 candidates per tag, before the listener filter below
 const RESULTS_PER_PAGE = 50;
-const DELAY_MS = 150; // stay well under any reasonable rate limit
+const DELAY_MS = 150; // stay well under Last.fm's rate limit (proven safe below at 1 request in flight at a time)
+
+// A tag chart's page 1 is genuinely famous artists, but by page 5-10 it's
+// full of real, working, but non-famous acts (see the "Force MD's" /
+// "Johnson, Hawkins, Tatum & Durr" type names that were showing up in
+// generated rankings). Last.fm listener count is a direct, global
+// popularity signal, so filtering on it (rather than just trusting a
+// tag's internal rank) keeps the roster to artists most viewers would
+// actually recognize regardless of which tag surfaced them.
+const MIN_LISTENERS = 500_000;
+// Once a tag's chart has produced this many artists in a row under the
+// listener bar, stop paging further into that tag — chart order is
+// popularity-descending, so a long miss streak means the remaining pages
+// are increasingly unlikely to clear a *global* listener bar that page 1
+// artists already struggled with. This is what keeps a full run from
+// needing ~15,000 sequential Last.fm calls (which, at a safe single-
+// request-at-a-time pace, would take well over an hour).
+const EARLY_STOP_STREAK = 20;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,12 +103,28 @@ function sleep(ms: number) {
 
 export async function expandArtistRoster() {
   const existing = JSON.parse(readFileSync(ARTISTS_JSON_PATH, "utf-8")) as ArtistConfig[];
-  const byNameLower = new Map(existing.map((a) => [a.name.toLowerCase(), a]));
+  // Hand-curated entries (real bio + pre-verified channel id) are kept
+  // regardless of the listener filter below — they were personally
+  // chosen, not tag-chart noise. Everything else gets re-derived from
+  // the tag charts and re-checked against MIN_LISTENERS, which also
+  // naturally drops any previously-added artist that no longer clears
+  // the bar.
+  const curated = existing.filter((a) => a.bio);
+  const byNameLower = new Map<string, ArtistConfig>(curated.map((a) => [a.name.toLowerCase(), a]));
+  const seenThisRun = new Set<string>(byNameLower.keys());
 
-  let newCount = 0;
-
+  // One request in flight at a time, each followed by a fixed delay —
+  // this exact pacing (used below and in the tag.getTopArtists loop) got
+  // through hundreds of calls earlier in this same job without issue.
+  // A previous version of this function checked listener counts with 10
+  // requests in flight at once and no delay between them; Last.fm started
+  // silently rate-limiting partway through (error code 29), and because
+  // that error was being treated the same as "artist not found" (0
+  // listeners), it quietly dropped ~14,000 real candidates — including
+  // huge, obviously-famous names — instead of failing loudly.
   for (const tag of GENRE_TAGS) {
-    let tagCount = 0;
+    let tagKept = 0;
+    let consecutiveMisses = 0;
     for (let page = 1; page <= PAGES_PER_TAG; page++) {
       let names: string[];
       try {
@@ -104,21 +137,35 @@ export async function expandArtistRoster() {
 
       for (const name of names) {
         const key = name.toLowerCase();
-        if (!byNameLower.has(key)) {
+        if (seenThisRun.has(key)) continue; // already curated, or already kept from an earlier tag
+        seenThisRun.add(key);
+
+        const listeners = await getArtistListeners(name);
+        await sleep(DELAY_MS);
+
+        if (listeners > MIN_LISTENERS) {
           byNameLower.set(key, { name, youtubeChannelId: null });
-          newCount++;
-          tagCount++;
+          tagKept++;
+          consecutiveMisses = 0;
+        } else {
+          consecutiveMisses++;
+          if (consecutiveMisses >= EARLY_STOP_STREAK) break;
         }
       }
-
-      await sleep(DELAY_MS);
+      if (consecutiveMisses >= EARLY_STOP_STREAK) break;
     }
-    console.log(`${tag}: +${tagCount} new artist(s)`);
+    console.log(`${tag}: +${tagKept} artist(s) cleared ${MIN_LISTENERS.toLocaleString()} listeners`);
+
+    // Checkpoint after every tag so a crash or a sustained rate limit
+    // loses at most one tag's worth of progress, not the whole run.
+    writeFileSync(ARTISTS_JSON_PATH, JSON.stringify([...byNameLower.values()], null, 2) + "\n");
   }
 
   const merged = [...byNameLower.values()];
-  writeFileSync(ARTISTS_JSON_PATH, JSON.stringify(merged, null, 2) + "\n");
-  console.log(`\nRoster: ${existing.length} -> ${merged.length} artists (+${newCount} new)`);
+  console.log(
+    `\nRoster: ${existing.length} -> ${merged.length} artists ` +
+      `(${curated.length} curated + ${merged.length - curated.length} cleared ${MIN_LISTENERS.toLocaleString()} listeners)`
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

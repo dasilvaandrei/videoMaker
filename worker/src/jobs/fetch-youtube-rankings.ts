@@ -53,7 +53,14 @@ export async function fetchYoutubeRankings(onlyArtistNames?: string[]) {
       if (cacheError) throw cacheError;
     }
 
-    const videoIds = await getChannelVideoIds(channelId, 50);
+    // Was capped at 50 (the channel's *most recent* uploads only), which
+    // silently excluded an artist's actual biggest hits once they aged out
+    // of that window — e.g. Calvin Harris's most-viewed videos ever
+    // ("Summer", "This Is What You Came For") are years old and never
+    // entered the top-5-by-views contest. 1000 comfortably covers a
+    // typical artist channel's full catalog while still bounding the
+    // videos.list cost for the rare channel with thousands of uploads.
+    const videoIds = await getChannelVideoIds(channelId, 1000);
     const videos = await getVideosInfo(videoIds);
     const eligible = videos
       .filter((v) => v.durationSeconds >= MIN_DURATION_SECONDS && !EXCLUDED_TITLE_PATTERN.test(v.title))

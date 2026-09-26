@@ -43,6 +43,53 @@ export async function getTopArtistsByTag(tag: string, page: number, limit = 50):
   return artists.map((a) => a.name);
 }
 
+// Last.fm error code 29 is specifically "Rate Limit Exceeded" (see
+// https://www.last.fm/api/errorcodes) — distinct from e.g. code 6
+// ("artist not found"), which is a legitimate 0. Conflating the two
+// caused a real incident: a bulk roster rebuild that hit this rate limit
+// partway through silently treated every remaining artist as 0 listeners
+// and dropped ~14,000 of them, including huge, obviously-famous names.
+const RATE_LIMIT_ERROR_CODE = 29;
+
+class LastfmRateLimitError extends Error {}
+
+// Global listener count for an artist — used to filter the tag-chart-
+// derived roster (see jobs/expand-artist-roster.ts) down to actually
+// famous names, since a tag's chart page 5-10 is full of real but obscure
+// artists. Returns 0 (rather than throwing) when Last.fm genuinely has no
+// info for the name, so one unrecognized artist doesn't abort the whole
+// roster rebuild — but retries with backoff on a rate-limit response
+// instead of silently returning 0, since that would misreport a real
+// artist as unpopular.
+export async function getArtistListeners(artistName: string, retriesLeft = 5): Promise<number> {
+  const apiKey = process.env.LASTFM_API_KEY;
+  if (!apiKey) throw new Error("LASTFM_API_KEY must be set");
+
+  const url = new URL(API_BASE);
+  url.search = new URLSearchParams({
+    method: "artist.getinfo",
+    artist: artistName,
+    api_key: apiKey,
+    format: "json",
+  }).toString();
+
+  const res = await fetch(url);
+  const body = await res.json();
+
+  if (body.error === RATE_LIMIT_ERROR_CODE) {
+    if (retriesLeft <= 0) {
+      throw new LastfmRateLimitError(`Last.fm rate limit exceeded checking listeners for ${JSON.stringify(artistName)}, out of retries`);
+    }
+    const backoffMs = 2000 * 2 ** (5 - retriesLeft); // 2s, 4s, 8s, 16s, 32s
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    return getArtistListeners(artistName, retriesLeft - 1);
+  }
+
+  if (!res.ok || body.error) return 0;
+
+  return Number(body.artist?.stats?.listeners ?? 0);
+}
+
 export async function getArtistTopTracks(artistName: string, limit = 5): Promise<LastfmTopTrack[]> {
   const apiKey = process.env.LASTFM_API_KEY;
   if (!apiKey) throw new Error("LASTFM_API_KEY must be set");
