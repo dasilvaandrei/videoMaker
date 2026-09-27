@@ -14,7 +14,13 @@
 import { publishToInstagram } from "./publish-instagram.js";
 
 async function main() {
-  const publishedCount = await publishToInstagram({ limit: 1 });
+  // Was 1/run, which only matched output when roughly one new video got
+  // approved per day — once approvals started outpacing that, a real
+  // backlog built up (ranking_videos sitting approved+ready but never
+  // reaching Instagram). 5 comfortably clears more than a typical day's
+  // new approvals so the backlog actually drains instead of just holding
+  // steady.
+  const publishedCount = await publishToInstagram({ limit: 5 });
   if (publishedCount === 0) {
     throw new Error("Instagram publish produced zero published videos — see logs above for why.");
   }
