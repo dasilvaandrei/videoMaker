@@ -50,6 +50,36 @@ function rotationPeriodsSinceEpoch(): number {
   return Math.floor(Date.now() / ROTATION_PERIOD_MS);
 }
 
+// artists.json is built genre-tag by genre-tag (see
+// expand-artist-roster.ts) — every jazz artist landed in one contiguous
+// block, then every house artist, etc. Indexing straight into that file
+// order meant the rotation spent weeks grinding through one genre block
+// before ever reaching the next (jazz alone was ~100 artists, i.e.
+// ~50 days of nothing but jazz at 2 artists/day). A fixed-seed shuffle
+// still visits every artist exactly once per full cycle before repeating
+// (same fairness as before, same no-persisted-state determinism — same
+// roster file always shuffles to the same order), it just stops the
+// order from tracking genre-tag blocks.
+function seededShuffle<T>(items: T[], seed: number): T[] {
+  // mulberry32 — small, deterministic, good enough for "break up genre
+  // clustering," not a security- or statistics-sensitive use.
+  let state = seed;
+  function next(): number {
+    state |= 0;
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(next() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 // A ranking whose song_clips include even one permanently 'failed' entry
 // can never reach render_status='ready' — generate-intro-vo.ts and
 // generate-ranking-render-metadata.ts both gate on *all* items being
@@ -151,7 +181,7 @@ export async function runDailyPipeline() {
   if (unusedPersonalRankingId) {
     console.log(`Today's pick: unused personal ranking ${unusedPersonalRankingId}`);
   } else {
-    const roster = loadArtistRoster();
+    const roster = seededShuffle(loadArtistRoster(), 0x5eed);
     if (roster.length === 0) throw new Error("artists.json is empty — add at least one artist");
 
     const pairIndex = rotationPeriodsSinceEpoch() % (roster.length * 2);
