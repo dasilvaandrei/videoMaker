@@ -14,7 +14,7 @@
 //
 // Re-run this (and update BG_LOOP_PATHS in render-ranking-videos.ts) any
 // time the library should be refreshed — it's intentionally not dynamic
-// per-video, the same way RANK_DING_PATH's sfx is a fixed, reused asset.
+// per-video.
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

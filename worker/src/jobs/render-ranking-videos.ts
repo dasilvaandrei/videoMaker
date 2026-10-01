@@ -43,9 +43,6 @@ const STANDARD_DISPLAY_SECONDS = 10.9;
 // for the YouTube-specific copy when it runs over. 59s, not 59.9s, for
 // encode/rounding margin under the hard 60s cutoff.
 const YOUTUBE_MAX_SECONDS = 59;
-// Synthesized once (a two-tone chime, not a licensed sound), uploaded to
-// this fixed path — every render just signs a fresh URL for the same file.
-const RANK_DING_PATH = "sfx/rank-ding.mp3";
 // Small, fixed library of "satisfying" B-roll loops for the intro's
 // split-screen bottom half — see jobs/resolve-bg-loops.ts for how these
 // were sourced (CC-licensed, not the same Content ID risk tradeoff as
@@ -225,11 +222,6 @@ export async function renderRankingVideos() {
         throw new Error(`ranking ${video.ranking_id} has ${items?.length ?? 0} items, need 5`);
       }
 
-      const { data: sfxSigned, error: sfxSignError } = await supabase.storage
-        .from(MEDIA_BUCKET)
-        .createSignedUrl(RANK_DING_PATH, SIGNED_URL_TTL_SECONDS);
-      if (sfxSignError) throw sfxSignError;
-
       // Rank 5's video shares the same downloaded clip file as the
       // intro's continuous background audio (see RankingCountdown.tsx) —
       // that audio plays from the file's start through the intro *and*
@@ -323,7 +315,6 @@ export async function renderRankingVideos() {
             // already. null survives JSON and reads as falsy in the
             // Header's {disclaimer && ...} check, so it actually suppresses.
             disclaimer: ranking.source === "personal" ? null : FEATURE_DISCLAIMER,
-            sfxSrc: sfxSigned.signedUrl,
             introText: ranking.intro_on_screen_text,
             introVoSrc: introVoSignedUrl,
             introDurationInSeconds: ranking.intro_vo_duration_seconds,

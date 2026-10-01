@@ -55,10 +55,6 @@ export type RankingCountdownProps = {
   // credited to the producer, not the featured vocalist). Personal
   // rankings have no need for this.
   disclaimer?: string | null;
-  // Short "ding" sound played at the start of every segment (the
-  // scoreboard's rank-advance pattern interrupt). Optional so the
-  // composition still works without it (e.g. Studio preview).
-  sfxSrc?: string;
   // Bold hook text shown during the intro (e.g. "THE NUMBERS DON'T LIE"),
   // spoken by introVoSrc — see generate-intro-vo.ts for where both come
   // from. null/undefined skips the intro scene entirely (e.g. an older
@@ -571,7 +567,6 @@ const ScoreboardSidebar: React.FC<{ activeRank: number; segments: RankingSegment
 
 const RankingSegment: React.FC<
   RankingSegmentData & {
-    sfxSrc?: string;
     artistName: string;
     sourceBadge: string;
     disclaimer?: string | null;
@@ -587,7 +582,6 @@ const RankingSegment: React.FC<
   videoSrc,
   rank,
   durationInSeconds,
-  sfxSrc,
   artistName,
   sourceBadge,
   disclaimer,
@@ -619,8 +613,6 @@ const RankingSegment: React.FC<
       ) : (
         video
       )}
-      {sfxSrc && <Audio src={sfxSrc} />}
-
       {/* Scrim so white text stays readable over bright footage */}
       <AbsoluteFill
         style={{
@@ -641,7 +633,6 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
   artistName,
   sourceBadge,
   disclaimer,
-  sfxSrc,
   introText,
   introVoSrc,
   introDurationInSeconds: introVoSeconds,
@@ -670,7 +661,6 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
       <Series.Sequence key={segment.rank} durationInFrames={durationInFrames}>
         <RankingSegment
           {...segment}
-          sfxSrc={sfxSrc}
           artistName={artistName}
           sourceBadge={sourceBadge}
           disclaimer={disclaimer}
