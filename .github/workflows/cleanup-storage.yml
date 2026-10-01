@@ -1,0 +1,39 @@
+name: Cleanup published storage
+
+# Self-heal against the project running out of Supabase storage/egress
+# quota (see the 2026-09-30 incident, where exceed_storage_size_quota +
+# exceed_egress_quota restricted the whole project and silently stopped
+# every publish job). Weekly is plenty — this only reclaims space from
+# content that's already fully published everywhere, so there's no
+# urgency to run it more often, and a slow trickle of finished videos
+# isn't going to fill up storage in a few days.
+on:
+  schedule:
+    - cron: "0 9 * * 0" # Sundays, 9:00 AM UTC
+  workflow_dispatch: {} # manual trigger, e.g. right after a quota incident
+
+jobs:
+  cleanup-storage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      # worker/package.json's job scripts all pass Node's --env-file=../.env
+      # — see daily-pipeline.yml's comment for why this needs to exist
+      # (not be populated) even in CI, where real values come from the
+      # env: block below.
+      - name: Create empty .env for --env-file
+        run: touch .env
+
+      - name: Clean up fully-published storage
+        working-directory: worker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run cleanup-published-storage
