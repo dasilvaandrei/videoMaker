@@ -3,13 +3,16 @@ name: Cleanup published storage
 # Self-heal against the project running out of Supabase storage/egress
 # quota (see the 2026-09-30 incident, where exceed_storage_size_quota +
 # exceed_egress_quota restricted the whole project and silently stopped
-# every publish job). Weekly is plenty — this only reclaims space from
-# content that's already fully published everywhere, so there's no
-# urgency to run it more often, and a slow trickle of finished videos
-# isn't going to fill up storage in a few days.
+# every publish job). Started weekly on the assumption that a slow
+# trickle of finished videos wouldn't fill storage in a few days — wrong:
+# it refilled past quota and re-triggered the same lockout just 2 days
+# after a full cleanup (2026-10-03), this time hard enough to block even
+# read access. Daily now, and cleanup-published-storage.ts no longer
+# waits on Instagram's slower backlog to call a video "done" (see its
+# CLEANUP_GATING_PLATFORMS comment), so there's much more to reclaim.
 on:
   schedule:
-    - cron: "0 9 * * 0" # Sundays, 9:00 AM UTC
+    - cron: "0 9 * * *" # Daily, 9:00 AM UTC
   workflow_dispatch: {} # manual trigger, e.g. right after a quota incident
 
 jobs:

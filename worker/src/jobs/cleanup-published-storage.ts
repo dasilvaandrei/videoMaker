@@ -3,15 +3,17 @@
 // project doesn't keep accumulating storage until it trips a plan quota
 // again (see the 2026-09-30 incident: exceed_storage_size_quota +
 // exceed_egress_quota restricted the whole project, stopping every
-// publish job at once).
+// publish job at once — and the 2026-10-03 repeat, where it recurred in
+// just two days and this time locked out *reads* too).
 //
-// "Fully done" = every platform_account row in the DB has a published
-// post for that ranking_video — dynamic over whatever platforms exist
-// (YouTube/TikTok/Instagram today) rather than hardcoded, so a video
-// only gets cleaned up once nothing could still need its file. This is
-// deliberately conservative: a platform added later that never gets a
-// published post for an old video just means that video is never
-// cleaned up, not that something gets deleted too early.
+// "Fully done" = published to every platform in CLEANUP_GATING_PLATFORMS
+// below, currently YouTube + TikTok — not Instagram, and not "every
+// platform_account that happens to exist" as this originally shipped.
+// Instagram's publish job works through its own backlog on its own
+// schedule, decoupled from render/cleanup timing, so requiring it here
+// meant old renders/clips sat around forever waiting on a queue that
+// kept growing — that backlog is exactly what filled storage past its
+// quota both times. See CLEANUP_GATING_PLATFORMS's own comment.
 //
 // song_clips are shared across every ranking that happens to include
 // that song (one download per song, not per ranking — see
@@ -68,12 +70,31 @@ async function deleteStoragePaths(paths: string[]): Promise<Set<string>> {
   return deleted;
 }
 
+// Only these platforms gate cleanup — every daily-pipeline run posts to
+// both the same day, so "published to both" is a real completeness
+// signal. Instagram deliberately isn't in this list: its own publish job
+// works through a backlog on its own schedule, completely decoupled
+// from render/cleanup timing, so waiting on it here meant old renders
+// and song clips sat around forever (they're what filled storage past
+// its quota and locked the whole project out — see the 2026-10-03
+// incident). Instagram is treated as best-effort from here on: a video
+// can get cleaned up whether or not Instagram ever got to it.
+const CLEANUP_GATING_PLATFORMS = ["youtube", "tiktok"];
+
 export async function cleanupPublishedStorage() {
-  const { data: platformAccounts, error: accountsError } = await supabase.from("platform_accounts").select("id");
+  const { data: platforms, error: platformsError } = await supabase.from("platforms").select("id, name");
+  if (platformsError) throw platformsError;
+  const gatingPlatformIds = new Set(
+    (platforms ?? []).filter((p) => CLEANUP_GATING_PLATFORMS.includes(p.name as string)).map((p) => p.id as string)
+  );
+
+  const { data: platformAccounts, error: accountsError } = await supabase.from("platform_accounts").select("id, platform_id");
   if (accountsError) throw accountsError;
-  const allAccountIds = (platformAccounts ?? []).map((a) => a.id as string);
+  const allAccountIds = (platformAccounts ?? [])
+    .filter((a) => gatingPlatformIds.has(a.platform_id as string))
+    .map((a) => a.id as string);
   if (allAccountIds.length === 0) {
-    console.log("no platform_accounts rows — nothing to check publish-completeness against, skipping");
+    console.log("no youtube/tiktok platform_accounts rows — nothing to check publish-completeness against, skipping");
     return;
   }
 

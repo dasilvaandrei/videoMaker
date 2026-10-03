@@ -11,7 +11,7 @@
 // Same invocation shape as the other publish jobs:
 //   npm run publish-instagram                      -> every eligible video
 //   npm run publish-instagram -- <ranking_video_id> -> just one, by id
-//   npm run publish-instagram -- --limit N          -> oldest N eligible
+//   npm run publish-instagram -- --limit N          -> newest N eligible
 
 import { createMediaContainer, getContainerStatus, publishMediaContainer } from "../lib/meta.js";
 import { supabase } from "../lib/supabase.js";
@@ -98,11 +98,21 @@ export async function publishToInstagram(options: PublishOptions = {}): Promise<
   if (postsError) throw postsError;
   const postedIds = new Set((existingPosts ?? []).map((p) => p.ranking_video_id as string));
 
+  // Newest first, not oldest — this used to work through the backlog
+  // chronologically, which meant Instagram was perpetually posting
+  // whatever was oldest and un-posted instead of roughly matching
+  // YouTube/TikTok's current content. It also meant old renders/clips
+  // had to stay in Storage indefinitely waiting for Instagram to
+  // eventually reach them, which is what filled storage past its quota
+  // (see cleanup-published-storage.ts's CLEANUP_GATING_PLATFORMS comment
+  // for the other half of this fix). Newest-first means Instagram stays
+  // roughly in sync with current content, and any truly old backlog
+  // just never gets reached — intentional now, not an oversight.
   const { data: videos, error: videosError } = await supabase
     .from("ranking_videos")
     .select("id, storage_path, title, caption, hashtags, created_at")
     .eq("render_status", "ready")
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
     .returns<EligibleVideo[]>();
   if (videosError) throw videosError;
 
