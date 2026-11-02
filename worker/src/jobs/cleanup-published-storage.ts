@@ -1,56 +1,48 @@
-// Periodic self-heal: deletes the Storage objects (rendered videos,
-// song clips) for content that's fully done its job, so the Supabase
-// project doesn't keep accumulating storage until it trips a plan quota
-// again (see the 2026-09-30 incident: exceed_storage_size_quota +
-// exceed_egress_quota restricted the whole project, stopping every
-// publish job at once — and the 2026-10-03 repeat, where it recurred in
-// just two days and this time locked out *reads* too).
+// Deletes rendered videos and song clips from Storage once they've done
+// their job, so the Supabase project never fills up again. Storage quota
+// overruns restricted (2026-09-30, 2026-10-03) and then took down
+// (2026-10-13) the whole project, which stopped every publish job.
 //
-// "Fully done" = published to every platform in CLEANUP_GATING_PLATFORMS
-// below, currently YouTube + TikTok — not Instagram, and not "every
-// platform_account that happens to exist" as this originally shipped.
-// Instagram's publish job works through its own backlog on its own
-// schedule, decoupled from render/cleanup timing, so requiring it here
-// meant old renders/clips sat around forever waiting on a queue that
-// kept growing — that backlog is exactly what filled storage past its
-// quota both times. See CLEANUP_GATING_PLATFORMS's own comment.
+// Runs at the end of every daily-pipeline run (right after that run's
+// YouTube + TikTok uploads, so a video is deleted as soon as it's posted)
+// and once a day on its own as a backstop (cleanup-storage.yml).
 //
-// song_clips are shared across every ranking that happens to include
-// that song (one download per song, not per ranking — see
-// resolve-song-clips.ts) — a clip only gets deleted once every ranking
-// referencing its song is itself fully done.
-//
-// Only clears the storage_path column after Storage actually confirms
-// the delete, and only ever touches rows whose render_status/status are
-// already in their terminal state ('ready' / 'downloaded') — nothing
-// downstream re-reads storage_path for a video that's already published
-// everywhere, so nulling it here is just defensive, not required for
-// correctness.
+// Three passes:
+//   1. Renders: once a video is published to YouTube, delete both of its
+//      files — the master (storage_path) and the trimmed YouTube copy
+//      (youtube_storage_path). An earlier version only deleted the master,
+//      leaving roughly half of render storage behind.
+//   2. Song clips: delete once no in-flight ranking needs the song (see
+//      lib/rankingActivity.ts). The row stays status='downloaded' with
+//      storage_path=null, and resolve-song-clips.ts re-queues it if a later
+//      ranking reuses the song.
+//   3. Orphans: anything under renders/ or song-clips/ that no DB row
+//      points at (left behind by failed or interrupted renders). Skips
+//      files newer than ORPHAN_MIN_AGE_HOURS, since a render that's
+//      uploading right now hasn't written its path to the DB yet.
 
 import { supabase } from "../lib/supabase.js";
+import {
+  fetchAllRows,
+  findActiveRankingIds,
+  getSongIdsForRankings,
+  getYoutubePublishedVideoIds,
+} from "../lib/rankingActivity.js";
 
 const MEDIA_BUCKET = "media";
 const DELETE_BATCH_SIZE = 100;
+const LIST_PAGE_SIZE = 1000;
+const ORPHAN_MIN_AGE_HOURS = 6;
+const SWEPT_FOLDERS = ["renders", "song-clips"];
 
-interface RankingVideoRow {
+interface VideoRow {
   id: string;
-  ranking_id: string;
-  storage_path: string | null;
   render_status: string;
+  storage_path: string | null;
+  youtube_storage_path: string | null;
 }
 
-interface PostRow {
-  ranking_video_id: string;
-  platform_account_id: string;
-  status: string;
-}
-
-interface RankingItemRow {
-  ranking_id: string;
-  song_id: string;
-}
-
-interface SongClipRow {
+interface ClipRow {
   id: string;
   song_id: string;
   storage_path: string | null;
@@ -61,135 +53,100 @@ async function deleteStoragePaths(paths: string[]): Promise<Set<string>> {
   for (let i = 0; i < paths.length; i += DELETE_BATCH_SIZE) {
     const batch = paths.slice(i, i + DELETE_BATCH_SIZE);
     const { data, error } = await supabase.storage.from(MEDIA_BUCKET).remove(batch);
-    if (error) {
-      console.error(`storage delete failed for batch starting at ${i}:`, error.message);
-      continue;
-    }
+    if (error) throw new Error(`storage delete failed: ${error.message}`);
     for (const item of data ?? []) deleted.add(item.name);
   }
   return deleted;
 }
 
-// Only these platforms gate cleanup — every daily-pipeline run posts to
-// both the same day, so "published to both" is a real completeness
-// signal. Instagram deliberately isn't in this list: its own publish job
-// works through a backlog on its own schedule, completely decoupled
-// from render/cleanup timing, so waiting on it here meant old renders
-// and song clips sat around forever (they're what filled storage past
-// its quota and locked the whole project out — see the 2026-10-03
-// incident). Instagram is treated as best-effort from here on: a video
-// can get cleaned up whether or not Instagram ever got to it.
-const CLEANUP_GATING_PLATFORMS = ["youtube", "tiktok"];
+async function listFolder(folder: string): Promise<{ path: string; createdAt: string | null }[]> {
+  const files: { path: string; createdAt: string | null }[] = [];
+  for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
+    const { data, error } = await supabase.storage
+      .from(MEDIA_BUCKET)
+      .list(folder, { limit: LIST_PAGE_SIZE, offset, sortBy: { column: "name", order: "asc" } });
+    if (error) throw new Error(`storage list failed for ${folder}/: ${error.message}`);
+    for (const item of data ?? []) {
+      // Folders come back with a null id; only files have one.
+      if (item.id) files.push({ path: `${folder}/${item.name}`, createdAt: item.created_at ?? null });
+    }
+    if (!data || data.length < LIST_PAGE_SIZE) return files;
+  }
+}
+
+async function fetchVideos(): Promise<VideoRow[]> {
+  return fetchAllRows<VideoRow>((from, to) =>
+    supabase
+      .from("ranking_videos")
+      .select("id, render_status, storage_path, youtube_storage_path")
+      .order("id")
+      .range(from, to)
+  );
+}
+
+async function fetchClipsWithFiles(): Promise<ClipRow[]> {
+  return fetchAllRows<ClipRow>((from, to) =>
+    supabase
+      .from("song_clips")
+      .select("id, song_id, storage_path")
+      .not("storage_path", "is", null)
+      .order("id")
+      .range(from, to)
+  );
+}
 
 export async function cleanupPublishedStorage() {
-  const { data: platforms, error: platformsError } = await supabase.from("platforms").select("id, name");
-  if (platformsError) throw platformsError;
-  const gatingPlatformIds = new Set(
-    (platforms ?? []).filter((p) => CLEANUP_GATING_PLATFORMS.includes(p.name as string)).map((p) => p.id as string)
+  const youtubePublished = await getYoutubePublishedVideoIds();
+
+  // Pass 1: renders of videos that are already on YouTube.
+  const videos = await fetchVideos();
+  const postedVideos = videos.filter(
+    (v) => youtubePublished.has(v.id) && (v.storage_path || v.youtube_storage_path)
   );
-
-  const { data: platformAccounts, error: accountsError } = await supabase.from("platform_accounts").select("id, platform_id");
-  if (accountsError) throw accountsError;
-  const allAccountIds = (platformAccounts ?? [])
-    .filter((a) => gatingPlatformIds.has(a.platform_id as string))
-    .map((a) => a.id as string);
-  if (allAccountIds.length === 0) {
-    console.log("no youtube/tiktok platform_accounts rows — nothing to check publish-completeness against, skipping");
-    return;
-  }
-
-  const { data: videos, error: videosError } = await supabase
-    .from("ranking_videos")
-    .select("id, ranking_id, storage_path, render_status")
-    .returns<RankingVideoRow[]>();
-  if (videosError) throw videosError;
-
-  const { data: posts, error: postsError } = await supabase
-    .from("posts")
-    .select("ranking_video_id, platform_account_id, status")
-    .returns<PostRow[]>();
-  if (postsError) throw postsError;
-
-  const publishedAccountsByVideo = new Map<string, Set<string>>();
-  for (const post of posts ?? []) {
-    if (post.status !== "published") continue;
-    if (!publishedAccountsByVideo.has(post.ranking_video_id)) {
-      publishedAccountsByVideo.set(post.ranking_video_id, new Set());
-    }
-    publishedAccountsByVideo.get(post.ranking_video_id)!.add(post.platform_account_id);
-  }
-
-  const fullyDoneVideoIds = new Set<string>();
-  const videosByRanking = new Map<string, RankingVideoRow[]>();
-  for (const video of videos ?? []) {
-    if (!videosByRanking.has(video.ranking_id)) videosByRanking.set(video.ranking_id, []);
-    videosByRanking.get(video.ranking_id)!.push(video);
-
-    if (video.render_status !== "ready") continue;
-    const publishedAccounts = publishedAccountsByVideo.get(video.id) ?? new Set();
-    if (allAccountIds.every((id) => publishedAccounts.has(id))) {
-      fullyDoneVideoIds.add(video.id);
-    }
-  }
-
-  const fullyDoneRankingIds = new Set<string>();
-  for (const [rankingId, rankingVideos] of videosByRanking) {
-    if (rankingVideos.length === 0) continue;
-    if (rankingVideos.every((v) => v.render_status === "ready" && fullyDoneVideoIds.has(v.id))) {
-      fullyDoneRankingIds.add(rankingId);
-    }
-  }
-
-  const renderPathsToDelete = (videos ?? [])
-    .filter((v) => fullyDoneVideoIds.has(v.id) && v.storage_path)
-    .map((v) => v.storage_path as string);
-
-  const { data: rankingItems, error: itemsError } = await supabase
-    .from("ranking_items")
-    .select("ranking_id, song_id")
-    .returns<RankingItemRow[]>();
-  if (itemsError) throw itemsError;
-
-  const rankingIdsBySong = new Map<string, Set<string>>();
-  for (const item of rankingItems ?? []) {
-    if (!rankingIdsBySong.has(item.song_id)) rankingIdsBySong.set(item.song_id, new Set());
-    rankingIdsBySong.get(item.song_id)!.add(item.ranking_id);
-  }
-
-  const { data: songClips, error: clipsError } = await supabase
-    .from("song_clips")
-    .select("id, song_id, storage_path")
-    .returns<SongClipRow[]>();
-  if (clipsError) throw clipsError;
-
-  const safeClips = (songClips ?? []).filter((clip) => {
-    if (!clip.storage_path) return false;
-    const referencingRankings = rankingIdsBySong.get(clip.song_id);
-    if (!referencingRankings || referencingRankings.size === 0) return false;
-    return [...referencingRankings].every((rid) => fullyDoneRankingIds.has(rid));
-  });
-  const clipPathsToDelete = safeClips.map((c) => c.storage_path as string);
-
-  console.log(
-    `${fullyDoneVideoIds.size} fully-published video(s), ${renderPathsToDelete.length} render file(s) and ${clipPathsToDelete.length} song-clip file(s) eligible for cleanup`
-  );
-
-  const deletedRenderPaths = await deleteStoragePaths(renderPathsToDelete);
-  const deletedClipPaths = await deleteStoragePaths(clipPathsToDelete);
-
-  const videosToNull = (videos ?? []).filter((v) => v.storage_path && deletedRenderPaths.has(v.storage_path));
-  for (const video of videosToNull) {
-    const { error } = await supabase.from("ranking_videos").update({ storage_path: null }).eq("id", video.id);
+  const renderPaths = postedVideos.flatMap((v) => [v.storage_path, v.youtube_storage_path].filter((p): p is string => !!p));
+  const deletedRenders = await deleteStoragePaths(renderPaths);
+  for (const video of postedVideos) {
+    const { error } = await supabase
+      .from("ranking_videos")
+      .update({ storage_path: null, youtube_storage_path: null })
+      .eq("id", video.id);
     if (error) throw error;
   }
 
-  const clipsToNull = safeClips.filter((c) => c.storage_path && deletedClipPaths.has(c.storage_path));
-  for (const clip of clipsToNull) {
+  // Pass 2: song clips no in-flight ranking needs.
+  const activeRankingIds = await findActiveRankingIds(youtubePublished);
+  const neededSongIds = await getSongIdsForRankings(activeRankingIds);
+  const clips = await fetchClipsWithFiles();
+  const unneededClips = clips.filter((c) => !neededSongIds.has(c.song_id));
+  const deletedClips = await deleteStoragePaths(unneededClips.map((c) => c.storage_path as string));
+  for (const clip of unneededClips) {
     const { error } = await supabase.from("song_clips").update({ storage_path: null }).eq("id", clip.id);
     if (error) throw error;
   }
 
-  console.log(`Deleted ${deletedRenderPaths.size} render file(s) and ${deletedClipPaths.size} song-clip file(s).`);
+  // Pass 3: files nothing points at anymore.
+  const referenced = new Set<string>();
+  for (const v of await fetchVideos()) {
+    if (v.storage_path) referenced.add(v.storage_path);
+    if (v.youtube_storage_path) referenced.add(v.youtube_storage_path);
+  }
+  for (const c of await fetchClipsWithFiles()) referenced.add(c.storage_path as string);
+
+  const cutoff = Date.now() - ORPHAN_MIN_AGE_HOURS * 60 * 60 * 1000;
+  const orphanPaths: string[] = [];
+  for (const folder of SWEPT_FOLDERS) {
+    for (const file of await listFolder(folder)) {
+      if (referenced.has(file.path)) continue;
+      if (!file.createdAt || new Date(file.createdAt).getTime() > cutoff) continue;
+      orphanPaths.push(file.path);
+    }
+  }
+  const deletedOrphans = await deleteStoragePaths(orphanPaths);
+
+  console.log(
+    `Storage cleanup: deleted ${deletedRenders.size} render file(s) from ${postedVideos.length} posted video(s), ` +
+      `${deletedClips.size} song clip(s), ${deletedOrphans.size} orphaned file(s).`
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

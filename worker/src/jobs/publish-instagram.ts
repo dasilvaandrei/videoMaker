@@ -98,16 +98,10 @@ export async function publishToInstagram(options: PublishOptions = {}): Promise<
   if (postsError) throw postsError;
   const postedIds = new Set((existingPosts ?? []).map((p) => p.ranking_video_id as string));
 
-  // Newest first, not oldest — this used to work through the backlog
-  // chronologically, which meant Instagram was perpetually posting
-  // whatever was oldest and un-posted instead of roughly matching
-  // YouTube/TikTok's current content. It also meant old renders/clips
-  // had to stay in Storage indefinitely waiting for Instagram to
-  // eventually reach them, which is what filled storage past its quota
-  // (see cleanup-published-storage.ts's CLEANUP_GATING_PLATFORMS comment
-  // for the other half of this fix). Newest-first means Instagram stays
-  // roughly in sync with current content, and any truly old backlog
-  // just never gets reached — intentional now, not an oversight.
+  // Newest first, not oldest, so a manual run posts current content
+  // rather than working through an old backlog. Videos are deleted from
+  // Storage once they're on YouTube (cleanup-published-storage.ts), so
+  // only videos not yet on YouTube still have a file to post here.
   const { data: videos, error: videosError } = await supabase
     .from("ranking_videos")
     .select("id, storage_path, title, caption, hashtags, created_at")

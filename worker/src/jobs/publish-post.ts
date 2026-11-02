@@ -55,12 +55,6 @@ export interface PublishOptions {
 // GitHub Actions run rather than going unnoticed indefinitely.
 export async function publishApprovedClips(options: PublishOptions = {}): Promise<number> {
   const { onlyRankingVideoId, limit } = options;
-  const { data: decisions, error: decisionsError } = await supabase
-    .from("review_decisions")
-    .select("ranking_video_id")
-    .in("decision", ["approved", "edited"]);
-  if (decisionsError) throw decisionsError;
-  const approvedIds = new Set((decisions ?? []).map((d) => d.ranking_video_id as string));
 
   const { data: platformRow, error: platformError } = await supabase
     .from("platforms")
@@ -78,27 +72,42 @@ export async function publishApprovedClips(options: PublishOptions = {}): Promis
     .single();
   if (accountError) throw accountError;
 
+  // Only videos that still have a file are candidates — posted ones get
+  // their storage cleared (cleanup-published-storage.ts), so this stays a
+  // handful of rows, and the approval/posted lookups below are scoped to
+  // just those ids. Unscoped "all rows" reads here would hit PostgREST's
+  // 1000-row cap once enough videos piled up and silently stop publishing
+  // the newest ones.
+  const { data: videos, error: videosError } = await supabase
+    .from("ranking_videos")
+    .select("id, storage_path, youtube_storage_path, title, caption, hashtags, created_at")
+    .eq("render_status", "ready")
+    .not("storage_path", "is", null)
+    .order("created_at", { ascending: true })
+    .returns<EligibleVideo[]>();
+  if (videosError) throw videosError;
+  const candidateIds = (videos ?? []).map((v) => v.id);
+
+  const { data: decisions, error: decisionsError } = await supabase
+    .from("review_decisions")
+    .select("ranking_video_id")
+    .in("decision", ["approved", "edited"])
+    .in("ranking_video_id", candidateIds);
+  if (decisionsError) throw decisionsError;
+  const approvedIds = new Set((decisions ?? []).map((d) => d.ranking_video_id as string));
+
   // Only 'published' counts as done — a 'failed' row (from a previous
   // attempt) should be retried, not permanently skipped.
   const { data: existingPosts, error: postsError } = await supabase
     .from("posts")
     .select("ranking_video_id")
     .eq("platform_account_id", account.id)
-    .eq("status", "published");
+    .eq("status", "published")
+    .in("ranking_video_id", candidateIds);
   if (postsError) throw postsError;
   const postedIds = new Set((existingPosts ?? []).map((p) => p.ranking_video_id as string));
 
-  const { data: videos, error: videosError } = await supabase
-    .from("ranking_videos")
-    .select("id, storage_path, youtube_storage_path, title, caption, hashtags, created_at")
-    .eq("render_status", "ready")
-    .order("created_at", { ascending: true })
-    .returns<EligibleVideo[]>();
-  if (videosError) throw videosError;
-
-  let eligible = (videos ?? []).filter(
-    (v) => approvedIds.has(v.id) && !postedIds.has(v.id) && v.storage_path
-  );
+  let eligible = (videos ?? []).filter((v) => approvedIds.has(v.id) && !postedIds.has(v.id));
 
   if (onlyRankingVideoId) {
     eligible = eligible.filter((v) => v.id === onlyRankingVideoId);

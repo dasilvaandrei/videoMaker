@@ -10,10 +10,13 @@ name: Instagram publish
 # GitHub Actions cron is UTC-only and doesn't shift for daylight saving
 # — see daily-pipeline.yml's comment for the same fixed-EST-offset
 # caveat (this drifts to 7am ET during EDT, roughly March-November).
+#
+# Schedule turned off (2026-11-01): Instagram earns no ad revenue, and
+# videos are now deleted from Storage as soon as they're on YouTube (see
+# cleanup-published-storage.ts), so a scheduled run here would only ever
+# find nothing to post and fail. Manual trigger kept for one-offs.
 on:
-  schedule:
-    - cron: "0 11 * * *" # 6:00 AM EST / 7:00 AM EDT
-  workflow_dispatch: {} # manual trigger, e.g. to catch up after a gap
+  workflow_dispatch: {}
 
 jobs:
   instagram-publish:

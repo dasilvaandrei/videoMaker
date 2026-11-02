@@ -40,6 +40,7 @@ import { generateRankingRenderMetadata } from "./generate-ranking-render-metadat
 import { renderRankingVideos } from "./render-ranking-videos.js";
 import { publishApprovedClips } from "./publish-post.js";
 import { publishToTiktokInbox } from "./publish-tiktok-inbox.js";
+import { cleanupPublishedStorage } from "./cleanup-published-storage.js";
 import { supabase } from "../lib/supabase.js";
 
 // 6 hours, matching daily-pipeline.yml's 4x/day cron spacing — one
@@ -153,10 +154,22 @@ async function findUnusedPersonalRankingId(): Promise<string | null> {
 }
 
 async function autoApproveReadyVideos(): Promise<void> {
-  const { data: ready, error } = await supabase.from("ranking_videos").select("id").eq("render_status", "ready");
+  // Only videos that still have a file — posted ones get their storage
+  // cleared, so this stays a handful of rows instead of every video ever
+  // rendered (which would eventually hit PostgREST's 1000-row cap).
+  const { data: ready, error } = await supabase
+    .from("ranking_videos")
+    .select("id")
+    .eq("render_status", "ready")
+    .not("storage_path", "is", null);
   if (error) throw error;
+  const readyIds = (ready ?? []).map((v) => v.id as string);
+  if (readyIds.length === 0) return;
 
-  const { data: decided, error: decidedError } = await supabase.from("review_decisions").select("ranking_video_id");
+  const { data: decided, error: decidedError } = await supabase
+    .from("review_decisions")
+    .select("ranking_video_id")
+    .in("ranking_video_id", readyIds);
   if (decidedError) throw decidedError;
   const decidedIds = new Set((decided ?? []).map((d) => d.ranking_video_id as string));
 
@@ -235,6 +248,19 @@ export async function runDailyPipeline() {
     console.error("TikTok inbox send failed:", err instanceof Error ? err.message : err);
   }
 
+  // Delete what was just posted (and anything else already on YouTube) so
+  // storage never builds back up to the quota — see
+  // cleanup-published-storage.ts. Runs after both uploads since TikTok
+  // reads the same file. Failure is reported below rather than thrown here
+  // so it can't hide a publish failure.
+  let cleanupError: unknown = null;
+  try {
+    await cleanupPublishedStorage();
+  } catch (err) {
+    cleanupError = err;
+    console.error("Storage cleanup failed:", err instanceof Error ? err.message : err);
+  }
+
   // A day that produces zero published videos on either platform means
   // something broke (a source API change, every clip download failing —
   // see the Calvin Harris / yt-dlp "Sign in to confirm you're not a bot"
@@ -249,6 +275,11 @@ export async function runDailyPipeline() {
   if (tiktokSentCount === 0) {
     throw new Error(
       `Daily pipeline sent zero videos to the TikTok inbox${tiktokError ? `: ${tiktokError instanceof Error ? tiktokError.message : tiktokError}` : ""}`
+    );
+  }
+  if (cleanupError) {
+    throw new Error(
+      `Storage cleanup failed after publishing: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}`
     );
   }
 

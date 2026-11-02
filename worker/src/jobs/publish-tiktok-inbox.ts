@@ -52,12 +52,6 @@ export async function publishToTiktokInbox(options: PublishOptions = {}): Promis
   if (!refreshToken) throw new Error("TIKTOK_REFRESH_TOKEN must be set — run tiktok-oauth-bootstrap.ts first");
 
   const { onlyRankingVideoId, limit } = options;
-  const { data: decisions, error: decisionsError } = await supabase
-    .from("review_decisions")
-    .select("ranking_video_id")
-    .in("decision", ["approved", "edited"]);
-  if (decisionsError) throw decisionsError;
-  const approvedIds = new Set((decisions ?? []).map((d) => d.ranking_video_id as string));
 
   const { data: platformRow, error: platformError } = await supabase
     .from("platforms")
@@ -73,23 +67,37 @@ export async function publishToTiktokInbox(options: PublishOptions = {}): Promis
     .single();
   if (accountError) throw accountError;
 
-  const { data: existingPosts, error: postsError } = await supabase
-    .from("posts")
-    .select("ranking_video_id")
-    .eq("platform_account_id", account.id)
-    .eq("status", "published");
-  if (postsError) throw postsError;
-  const postedIds = new Set((existingPosts ?? []).map((p) => p.ranking_video_id as string));
-
+  // Scoped to videos that still have a file — same reasoning as
+  // publish-post.ts (keeps every read here small, well under PostgREST's
+  // 1000-row cap).
   const { data: videos, error: videosError } = await supabase
     .from("ranking_videos")
     .select("id, storage_path, title, caption, hashtags, created_at")
     .eq("render_status", "ready")
+    .not("storage_path", "is", null)
     .order("created_at", { ascending: true })
     .returns<EligibleVideo[]>();
   if (videosError) throw videosError;
+  const candidateIds = (videos ?? []).map((v) => v.id);
 
-  let eligible = (videos ?? []).filter((v) => approvedIds.has(v.id) && !postedIds.has(v.id) && v.storage_path);
+  const { data: decisions, error: decisionsError } = await supabase
+    .from("review_decisions")
+    .select("ranking_video_id")
+    .in("decision", ["approved", "edited"])
+    .in("ranking_video_id", candidateIds);
+  if (decisionsError) throw decisionsError;
+  const approvedIds = new Set((decisions ?? []).map((d) => d.ranking_video_id as string));
+
+  const { data: existingPosts, error: postsError } = await supabase
+    .from("posts")
+    .select("ranking_video_id")
+    .eq("platform_account_id", account.id)
+    .eq("status", "published")
+    .in("ranking_video_id", candidateIds);
+  if (postsError) throw postsError;
+  const postedIds = new Set((existingPosts ?? []).map((p) => p.ranking_video_id as string));
+
+  let eligible = (videos ?? []).filter((v) => approvedIds.has(v.id) && !postedIds.has(v.id));
 
   if (onlyRankingVideoId) {
     eligible = eligible.filter((v) => v.id === onlyRankingVideoId);

@@ -7,6 +7,7 @@
 // later if clip quality turns out to matter for retention.
 
 import { searchOfficialVideo, getVideosInfo } from "../lib/youtube.js";
+import { requeueEvictedClips } from "../lib/rankingActivity.js";
 import { supabase } from "../lib/supabase.js";
 
 // Always download the longer window (enough for the #1 reveal's extended
@@ -113,6 +114,11 @@ export async function resolveSongClips() {
     if (error) throw error;
     console.log(`queued clip window for song ${song.id}: ${clampedStart.toFixed(1)}s-${end.toFixed(1)}s`);
   }
+
+  // Step 3: a song whose clip file was deleted after an earlier ranking
+  // posted (see cleanup-published-storage.ts) gets downloaded again if a
+  // new ranking uses it.
+  await requeueEvictedClips();
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

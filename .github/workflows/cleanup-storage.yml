@@ -1,15 +1,12 @@
 name: Cleanup published storage
 
-# Self-heal against the project running out of Supabase storage/egress
-# quota (see the 2026-09-30 incident, where exceed_storage_size_quota +
-# exceed_egress_quota restricted the whole project and silently stopped
-# every publish job). Started weekly on the assumption that a slow
-# trickle of finished videos wouldn't fill storage in a few days — wrong:
-# it refilled past quota and re-triggered the same lockout just 2 days
-# after a full cleanup (2026-10-03), this time hard enough to block even
-# read access. Daily now, and cleanup-published-storage.ts no longer
-# waits on Instagram's slower backlog to call a video "done" (see its
-# CLEANUP_GATING_PLATFORMS comment), so there's much more to reclaim.
+# Backstop for Supabase storage. The main cleanup now runs at the end of
+# every daily-pipeline run, deleting each video as soon as it's on
+# YouTube (see cleanup-published-storage.ts). This daily run catches
+# anything that slipped through: a pipeline run that crashed before
+# reaching cleanup, or orphaned files from failed renders. Storage
+# quota overruns restricted and then took down the whole project in
+# Sept/Oct 2026, stopping every publish job.
 on:
   schedule:
     - cron: "0 9 * * *" # Daily, 9:00 AM UTC
