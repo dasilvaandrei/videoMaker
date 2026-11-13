@@ -1,82 +1,44 @@
-// One-off, run manually (not part of the daily cron): downloads a small,
-// fixed library of "satisfying" B-roll loops for the intro's split-screen
-// bottom half (see RankingCountdown.tsx's IntroHook and the user's
-// retention-hack brief — kinetic sand / 3D render loops keep the eye
-// moving while the intro VO plays). render-ranking-videos.ts picks one at
-// random per video from BG_LOOP_PATHS below.
+// One-off, run manually (not part of the daily cron): cuts the GTA 5
+// gameplay windows listed in config/gameplayLoops.ts from their source
+// video and uploads them to Storage, for the bottom half of every ranking
+// video. Re-run after changing that list.
 //
-// Deliberately restricted to videoLicense=creativeCommon in the search —
-// unlike the artist music videos (an accepted Content ID risk tradeoff
-// specific to sourcing an actual song's real official video, which has
-// no license-free substitute), this is generic, unrelated filler
-// footage, so there's no reason to accept that same risk when
-// specifically-licensed alternatives exist.
-//
-// Re-run this (and update BG_LOOP_PATHS in render-ranking-videos.ts) any
-// time the library should be refreshed — it's intentionally not dynamic
-// per-video.
+// Only Creative Commons footage — unlike the artist music videos (an
+// accepted Content ID risk, since a song's real video has no license-free
+// substitute), this is filler with free-to-use alternatives, so there's
+// no reason to take the same risk.
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { downloadYoutubeSection } from "../lib/ytdlp.js";
-import { getVideosInfo } from "../lib/youtube.js";
 import { supabase } from "../lib/supabase.js";
+import { GAMEPLAY_LOOPS, GAMEPLAY_LOOP_SECONDS, GAMEPLAY_SOURCE_VIDEO_ID } from "../config/gameplayLoops.js";
 
 const MEDIA_BUCKET = "media";
-// Picked from a live creativeCommon-filtered search (see this file's
-// header) — not guessed: kinetic sand, a 3D render loop, and a generic
-// oddly-satisfying loop (the user's original examples), plus Minecraft
-// parkour and GTA 5 mega-ramp gameplay (requested later — both sourced
-// from channels that explicitly self-label "no copyright"/"free to use"
-// in addition to the creativeCommon license filter). Note: no GTA 6 —
-// the game hasn't released, so there's no real gameplay footage to
-// source; every "gta 6" search result was either GTA 5 clips tagged
-// #gta6 or unrelated news/reaction videos, not usable.
-const SOURCE_VIDEOS: { videoId: string; slug: string }[] = [
-  { videoId: "lQU-PwVMKmU", slug: "kinetic-sand" },
-  { videoId: "f1xDEcBLFNI", slug: "3d-render-loop" },
-  { videoId: "2WxZpsR-rLU", slug: "satisfying-loop" },
-  { videoId: "s600FYgI5-s", slug: "minecraft-parkour" },
-  { videoId: "74voi0vlxHE", slug: "gta5-megaramp" },
-];
-// Long enough to cover virtually any intro VO length without running out
-// mid-sequence (see introDurationInSeconds in RankingCountdown.tsx —
-// real intro lines run a few seconds to a bit over ten).
-const LOOP_LENGTH_SECONDS = 25;
 
 export async function resolveBgLoops() {
-  const infos = await getVideosInfo(SOURCE_VIDEOS.map((v) => v.videoId));
-  const infoById = new Map(infos.map((i) => [i.videoId, i]));
-
-  for (const source of SOURCE_VIDEOS) {
-    const info = infoById.get(source.videoId);
-    if (!info) {
-      console.error(`${source.slug}: video ${source.videoId} not found, skipping`);
-      continue;
-    }
-
-    // Skip past any title-card start, same percentage-heuristic spirit as
-    // resolve-song-clips.ts.
-    const start = Math.max(0, Math.floor(info.durationSeconds * 0.1));
-    const end = Math.min(info.durationSeconds, start + LOOP_LENGTH_SECONDS);
-
+  for (const loop of GAMEPLAY_LOOPS) {
     const dir = await mkdtemp(join(tmpdir(), "bg-loop-"));
     const outputPath = join(dir, "loop.mp4");
 
     try {
-      await downloadYoutubeSection(source.videoId, start, end, outputPath);
+      await downloadYoutubeSection(
+        GAMEPLAY_SOURCE_VIDEO_ID,
+        loop.startSeconds,
+        loop.startSeconds + GAMEPLAY_LOOP_SECONDS,
+        outputPath
+      );
 
-      const objectPath = `bg-loops/${source.slug}.mp4`;
       const fileBuffer = await readFile(outputPath);
       const { error: uploadError } = await supabase.storage
         .from(MEDIA_BUCKET)
-        .upload(objectPath, fileBuffer, { contentType: "video/mp4", upsert: true });
+        .upload(loop.path, fileBuffer, { contentType: "video/mp4", upsert: true });
       if (uploadError) throw uploadError;
 
-      console.log(`${source.slug}: uploaded -> ${objectPath} (${(end - start).toFixed(1)}s)`);
+      console.log(`uploaded ${loop.path} (${GAMEPLAY_LOOP_SECONDS}s from ${loop.startSeconds}s)`);
     } catch (err) {
-      console.error(`${source.slug} failed:`, err instanceof Error ? err.message : err);
+      console.error(`${loop.path} failed:`, err instanceof Error ? err.message : err);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

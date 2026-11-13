@@ -16,6 +16,7 @@ import {
   Audio,
   Freeze,
   Img,
+  Loop,
   OffthreadVideo,
   Sequence,
   Series,
@@ -63,13 +64,15 @@ export type RankingCountdownProps = {
   introText?: string | null;
   introVoSrc?: string | null;
   introDurationInSeconds?: number | null;
-  // Split-screen intro visuals (the "retention hack" — a recognizable
-  // artist photo up top, kinetic B-roll below, so the eye has something
-  // to lock onto while the VO plays instead of a static black screen).
-  // Both fall back to a plain dark half rather than breaking the render
-  // if unresolved — see generate-intro-vo.ts / resolve-bg-loops.ts.
+  // Artist photo for the intro's top half; falls back to a plain dark half
+  // if unresolved (see generate-intro-vo.ts).
   introAvatarUrl?: string | null;
-  introBgLoopSrc?: string | null;
+  // GTA gameplay filling the bottom half for the whole video, intro
+  // through #1 (see config/gameplayLoops.ts). Muted. Loops every
+  // gameplayLoopSeconds in case the video outlasts the clip. Falls back to
+  // a plain dark half if unresolved.
+  gameplayLoopSrc?: string | null;
+  gameplayLoopSeconds?: number | null;
   // Ordered 5 -> 1, i.e. playback order (the reveal builds to #1).
   segments: RankingSegmentData[];
   // Affiliate sponsor segment (see config/sponsors.ts), inserted after
@@ -112,8 +115,21 @@ const FollowPopup: React.FC<{ frame: number }> = ({ frame }) => {
   });
   const opacity = interpolate(frame, [0, 6], [0, 1], { extrapolateRight: "clamp" });
 
+  // Top half only, so the gameplay keeps running underneath.
   return (
-    <AbsoluteFill style={{ backgroundColor: "black", justifyContent: "center", alignItems: "center" }}>
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: "50%",
+        backgroundColor: "black",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
       <div style={{ transform: `scale(${scale})`, opacity, textAlign: "center" }}>
         <div
           style={{
@@ -140,7 +156,7 @@ const FollowPopup: React.FC<{ frame: number }> = ({ frame }) => {
           for more 👉
         </div>
       </div>
-    </AbsoluteFill>
+    </div>
   );
 };
 
@@ -167,24 +183,20 @@ export function sponsorDurationInSeconds(voSeconds: number): number {
   return voSeconds + SPONSOR_BUFFER_SECONDS;
 }
 
-// Spoken-hook intro (see generate-intro-vo.ts) — the "split-screen
-// retention hack": a recognizable artist photo up top (psychological eye
-// contact if it's a face shot), kinetic "satisfying" B-roll below (the
-// motion keeps the eye locked on screen while the VO plays), with the
-// hook text banner straddling the seam between them. Each half is a
-// plain absolutely-positioned div using exactly two of
-// top/bottom/height, never all three — mixing e.g. `top` with
-// AbsoluteFill's default `height: 100%` once already pushed a whole
-// block invisibly off-canvas, so this composition avoids that pattern
-// everywhere now.
+// Spoken-hook intro (see generate-intro-vo.ts): a recognizable artist
+// photo in the top half, with the hook text banner straddling the seam.
+// The bottom half is the GTA gameplay layer that RankingCountdown runs
+// under the whole video. Each half is a plain absolutely-positioned div
+// using exactly two of top/bottom/height, never all three — mixing e.g.
+// `top` with AbsoluteFill's default `height: 100%` once pushed a whole
+// block invisibly off-canvas, so this composition avoids that pattern.
 const IntroHook: React.FC<{
   artistName: string;
   sourceBadge: string;
   introText: string;
   introVoSrc?: string | null;
   introAvatarUrl?: string | null;
-  introBgLoopSrc?: string | null;
-}> = ({ artistName, sourceBadge, introText, introVoSrc, introAvatarUrl, introBgLoopSrc }) => {
+}> = ({ artistName, sourceBadge, introText, introVoSrc, introAvatarUrl }) => {
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
 
@@ -192,7 +204,7 @@ const IntroHook: React.FC<{
   const opacity = interpolate(frame, [0, 5], [0, 1], { extrapolateRight: "clamp" });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
+    <AbsoluteFill>
       {introVoSrc && <Audio src={introVoSrc} />}
 
       {/* Top half — artist photo, or a plain dark gradient if none resolved. */}
@@ -206,15 +218,6 @@ const IntroHook: React.FC<{
         <AbsoluteFill
           style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.1) 55%, rgba(0,0,0,0.55) 100%)" }}
         />
-      </div>
-
-      {/* Bottom half — kinetic B-roll loop, or a plain dark gradient if none resolved. Muted: its own audio never competes with the VO. */}
-      <div style={{ position: "absolute", top: "50%", left: 0, right: 0, bottom: 0, overflow: "hidden" }}>
-        {introBgLoopSrc ? (
-          <OffthreadVideo src={introBgLoopSrc} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        ) : (
-          <AbsoluteFill style={{ background: "linear-gradient(200deg, #1a1a1a 0%, #050505 100%)" }} />
-        )}
       </div>
 
       <Header artistName={artistName} sourceBadge={sourceBadge} disclaimer={null} />
@@ -481,16 +484,18 @@ const ScoreboardSidebar: React.FC<{ activeRank: number; segments: RankingSegment
   const { width, height } = useVideoConfig();
   const byRank = new Map(segments.map((s) => [s.rank, s]));
 
+  // Sized to sit between the header and the halfway seam — the bottom half
+  // is GTA gameplay. Five rows at these sizes run ~23%-47% of the height.
   return (
     <div
       style={{
         position: "absolute",
         left: width * 0.05,
         right: width * 0.05,
-        top: height * 0.3,
+        top: height * 0.235,
         display: "flex",
         flexDirection: "column",
-        gap: height * 0.02,
+        gap: height * 0.008,
       }}
     >
       {RANKS_TOP_TO_BOTTOM.map((n) => {
@@ -517,14 +522,14 @@ const ScoreboardSidebar: React.FC<{ activeRank: number; segments: RankingSegment
             <span
               style={{
                 fontFamily: rankFontFamily,
-                fontSize: width * 0.1,
+                fontSize: width * 0.065,
                 color,
                 WebkitTextStroke: "2.5px black",
                 textShadow: glow,
                 textDecoration: isCompleted ? "line-through" : "none",
                 lineHeight: 1.1,
                 flexShrink: 0,
-                minWidth: width * 0.14,
+                minWidth: width * 0.09,
               }}
             >
               {n}
@@ -535,7 +540,7 @@ const ScoreboardSidebar: React.FC<{ activeRank: number; segments: RankingSegment
                   style={{
                     fontFamily: bodyFontFamily,
                     fontWeight: 700,
-                    fontSize: width * 0.034,
+                    fontSize: width * 0.03,
                     color: isCompleted ? "#9a9a9a" : "white",
                     textShadow: "0 2px 6px rgba(0,0,0,0.9)",
                     lineHeight: 1.15,
@@ -604,22 +609,25 @@ const RankingSegment: React.FC<
   const popupLocalFrame = frame - (clipDurationInFrames - followPopupFrames);
   const showFollowPopup = rank === 2 && popupLocalFrame >= 0;
 
+  // Music video in the top half; the bottom half is the GTA gameplay layer
+  // RankingCountdown runs under the whole video.
   return (
-    <AbsoluteFill style={{ backgroundColor: "black" }}>
-      {holdLastFrame ? (
-        <Freeze frame={clipDurationInFrames - 1} active={frame >= clipDurationInFrames}>
-          {video}
-        </Freeze>
-      ) : (
-        video
-      )}
-      {/* Scrim so white text stays readable over bright footage */}
-      <AbsoluteFill
-        style={{
-          background:
-            "linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.15) 30%, rgba(0,0,0,0.15) 70%, rgba(0,0,0,0.75) 100%)",
-        }}
-      />
+    <AbsoluteFill>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "50%", overflow: "hidden", backgroundColor: "black" }}>
+        {holdLastFrame ? (
+          <Freeze frame={clipDurationInFrames - 1} active={frame >= clipDurationInFrames}>
+            {video}
+          </Freeze>
+        ) : (
+          video
+        )}
+        {/* Scrim so the header and scoreboard stay readable over bright footage */}
+        <AbsoluteFill
+          style={{
+            background: "linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.45) 45%, rgba(0,0,0,0.55) 100%)",
+          }}
+        />
+      </div>
 
       <Header artistName={artistName} sourceBadge={sourceBadge} disclaimer={disclaimer} />
       <ScoreboardSidebar activeRank={rank} segments={allSegments} />
@@ -637,7 +645,8 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
   introVoSrc,
   introDurationInSeconds: introVoSeconds,
   introAvatarUrl,
-  introBgLoopSrc,
+  gameplayLoopSrc,
+  gameplayLoopSeconds,
   segments,
   sponsorName,
   sponsorVoSrc,
@@ -702,8 +711,24 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
   // rather than an abrupt jump the instant the scene cuts.
   const volumeRampFrames = Math.round(0.5 * fps);
 
+  const gameplayLoopFrames = Math.max(1, Math.round((gameplayLoopSeconds ?? 0) * fps));
+
   return (
-    <AbsoluteFill>
+    <AbsoluteFill style={{ backgroundColor: "#0a0a0a" }}>
+      {/* GTA gameplay in the bottom half for the whole video. One element
+          outside the Series so it plays continuously instead of restarting
+          at every scene cut; every scene above only paints the top half
+          (plus overlays that straddle the seam). */}
+      <div style={{ position: "absolute", top: "50%", left: 0, right: 0, bottom: 0, overflow: "hidden" }}>
+        {gameplayLoopSrc && gameplayLoopSeconds ? (
+          <Loop durationInFrames={gameplayLoopFrames}>
+            <OffthreadVideo src={gameplayLoopSrc} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          </Loop>
+        ) : (
+          <AbsoluteFill style={{ background: "linear-gradient(200deg, #1a1a1a 0%, #050505 100%)" }} />
+        )}
+      </div>
+
       {/* One continuous Audio spanning the intro + song #5, instead of
           each scene playing its own copy from 0:00 — quiet under the
           spoken hook, swelling to full right as #5 begins, so the song
@@ -735,7 +760,6 @@ export const RankingCountdown: React.FC<RankingCountdownProps> = ({
               introText={introText}
               introVoSrc={introVoSrc}
               introAvatarUrl={introAvatarUrl}
-              introBgLoopSrc={introBgLoopSrc}
             />
           </Series.Sequence>
         )}

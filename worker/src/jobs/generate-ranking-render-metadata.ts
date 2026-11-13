@@ -39,6 +39,13 @@ const SOURCE_HASHTAGS: Record<string, string[]> = {
   personal: ["top5", "musicranking", "debate"],
 };
 
+// Every video's bottom half is GTA 5 gameplay (config/gameplayLoops.ts),
+// so these describe what's actually on screen. Add "gtavi"/"gta6" once
+// the footage is real GTA 6 — tagging a game that isn't in the video
+// counts as misleading metadata under YouTube's spam policy, a risk to
+// the channel's monetization.
+const GAMEPLAY_HASHTAGS = ["gta", "gta5"];
+
 // Automated rankings (Last.fm playcount / YouTube view count) only ever
 // see songs primarily credited to the artist — a feature/collab hit like
 // a Bzrp Music Session gets credited to the producer, not the featured
@@ -220,7 +227,7 @@ export async function generateRankingRenderMetadata() {
         aspect_ratio: "9:16",
         title: buildTitle(artistName, ranking.source),
         caption: buildCaption(artistName, bio, ranking.source, ranking.note, sponsor),
-        hashtags: [...SOURCE_HASHTAGS[ranking.source], slug(artistName), "shorts"],
+        hashtags: [...SOURCE_HASHTAGS[ranking.source], slug(artistName), ...GAMEPLAY_HASHTAGS, "shorts"],
         sponsor_name: sponsor?.name ?? null,
         render_status: "queued",
       })

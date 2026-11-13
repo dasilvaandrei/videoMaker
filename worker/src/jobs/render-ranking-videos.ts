@@ -11,6 +11,7 @@ import { renderRankingCountdown, type AspectRatio } from "../remotion/render.js"
 import { FOLLOW_POPUP_SECONDS, introDurationInSeconds } from "../remotion/RankingCountdown.js";
 import { probeDurationSeconds, trimToMaxDuration } from "../lib/ffmpeg.js";
 import { SPONSORS } from "../config/sponsors.js";
+import { GAMEPLAY_LOOPS } from "../config/gameplayLoops.js";
 import { supabase } from "../lib/supabase.js";
 
 const MEDIA_BUCKET = "media";
@@ -43,14 +44,23 @@ const STANDARD_DISPLAY_SECONDS = 10.9;
 // for the YouTube-specific copy when it runs over. 59s, not 59.9s, for
 // encode/rounding margin under the hard 60s cutoff.
 const YOUTUBE_MAX_SECONDS = 59;
-// Small, fixed library of "satisfying" B-roll loops for the intro's
-// split-screen bottom half — see jobs/resolve-bg-loops.ts for how these
-// were sourced (CC-licensed, not the same Content ID risk tradeoff as
-// the artist clips) and how to refresh this list. Restricted to
-// Minecraft/GTA5 gameplay per operator request — kinetic-sand,
-// 3d-render-loop, and satisfying-loop stay uploaded in storage (in case
-// this list needs to widen again later) but are no longer picked.
-const BG_LOOP_PATHS = ["bg-loops/minecraft-parkour.mp4", "bg-loops/gta5-megaramp.mp4"];
+// Length of the original 25s gameplay loop — the shortest one that can be
+// in Storage. Only used if ffprobe can't read the chosen loop's length, so
+// RankingCountdown loops it early rather than running past its end.
+const FALLBACK_GAMEPLAY_LOOP_SECONDS = 25;
+
+// Picks one of the GTA gameplay windows at random. Falls back to the first
+// path (the original loop, always present) if the pick hasn't been
+// uploaded yet — see config/gameplayLoops.ts.
+async function signGameplayLoop(): Promise<string> {
+  const pick = GAMEPLAY_LOOPS[Math.floor(Math.random() * GAMEPLAY_LOOPS.length)].path;
+  for (const path of [pick, GAMEPLAY_LOOPS[0].path]) {
+    const { data, error } = await supabase.storage.from(MEDIA_BUCKET).createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
+    if (!error) return data.signedUrl;
+    console.warn(`gameplay loop ${path} unavailable: ${error.message}`);
+  }
+  throw new Error("no GTA gameplay loop available in Storage — run resolve-bg-loops");
+}
 
 // No on-screen badge for Last.fm — "LAST.FM" reads as unfamiliar jargon
 // to a casual viewer (the source is named in the caption instead).
@@ -170,11 +180,9 @@ export async function renderRankingVideos() {
         introVoSignedUrl = introSigned.signedUrl;
       }
 
-      const bgLoopPath = BG_LOOP_PATHS[Math.floor(Math.random() * BG_LOOP_PATHS.length)];
-      const { data: bgLoopSigned, error: bgLoopSignError } = await supabase.storage
-        .from(MEDIA_BUCKET)
-        .createSignedUrl(bgLoopPath, SIGNED_URL_TTL_SECONDS);
-      if (bgLoopSignError) throw bgLoopSignError;
+      // GTA gameplay for the bottom half of the whole video.
+      const gameplayLoopSrc = await signGameplayLoop();
+      const gameplayLoopSeconds = (await probeDurationSeconds(gameplayLoopSrc)) ?? FALLBACK_GAMEPLAY_LOOP_SECONDS;
 
       // Sponsor segment (see config/sponsors.ts) — video.sponsor_name was
       // decided back in generate-ranking-render-metadata.ts (has to match
@@ -203,12 +211,7 @@ export async function renderRankingVideos() {
           })
         );
 
-        const sponsorBgLoopPath = BG_LOOP_PATHS[Math.floor(Math.random() * BG_LOOP_PATHS.length)];
-        const { data: sponsorBgLoopSigned, error: sponsorBgLoopSignError } = await supabase.storage
-          .from(MEDIA_BUCKET)
-          .createSignedUrl(sponsorBgLoopPath, SIGNED_URL_TTL_SECONDS);
-        if (sponsorBgLoopSignError) throw sponsorBgLoopSignError;
-        sponsorBgLoopSignedUrl = sponsorBgLoopSigned.signedUrl;
+        sponsorBgLoopSignedUrl = await signGameplayLoop();
       }
 
       const { data: items, error: itemsError } = await supabase
@@ -319,7 +322,8 @@ export async function renderRankingVideos() {
             introVoSrc: introVoSignedUrl,
             introDurationInSeconds: ranking.intro_vo_duration_seconds,
             introAvatarUrl: introAvatarSignedUrl,
-            introBgLoopSrc: bgLoopSigned.signedUrl,
+            gameplayLoopSrc,
+            gameplayLoopSeconds,
             sponsorName: sponsorVoSignedUrl ? sponsor?.name ?? null : null,
             sponsorAffiliateUrl: sponsor?.affiliateUrl ?? null,
             sponsorVoSrc: sponsorVoSignedUrl,
