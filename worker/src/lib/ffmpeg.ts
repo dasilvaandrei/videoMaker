@@ -26,6 +26,32 @@ export async function trimToMaxDuration(inputPath: string, outputPath: string, m
   ]);
 }
 
+// Shrinks background gameplay for storage: 720p at 30fps (the render's own
+// frame rate), no audio (it's always played muted). Only ever fills the
+// bottom half of the frame, so this loses nothing visible — a
+// full-quality 75s window runs ~50 MB, which matters on Supabase's 1 GB
+// free storage. Busy footage (city driving, chases) still lands around
+// 25 MB per 75s; calm footage much less.
+export async function compressSilent720p(inputPath: string, outputPath: string): Promise<void> {
+  await execFileAsync("ffmpeg", [
+    "-y",
+    "-i",
+    inputPath,
+    "-an",
+    "-vf",
+    "scale=-2:720,fps=30",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "30",
+    "-movflags",
+    "+faststart",
+    outputPath,
+  ]);
+}
+
 export async function probeDurationSeconds(filePath: string): Promise<number | null> {
   try {
     const { stdout } = await execFileAsync("ffprobe", [

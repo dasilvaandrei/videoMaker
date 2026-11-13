@@ -30,7 +30,7 @@ import { loadFont as loadBodyFont } from "@remotion/google-fonts/Inter";
 
 const { fontFamily: rankFontFamily } = loadRankFont();
 const { fontFamily: bodyFontFamily } = loadBodyFont("normal", {
-  weights: ["400", "700"],
+  weights: ["400", "700", "800", "900"],
   subsets: ["latin"],
 });
 
@@ -449,11 +449,11 @@ const Header: React.FC<{ artistName: string; sourceBadge: string; disclaimer?: s
         <div
           style={{
             fontFamily: bodyFontFamily,
-            fontWeight: 400,
-            fontSize: width * 0.026,
-            color: "#c9c9c9",
+            fontWeight: 700,
+            fontSize: width * 0.028,
+            color: "#efefef",
             marginTop: 6,
-            textShadow: "0 1px 4px rgba(0,0,0,0.9)",
+            textShadow: "0 2px 4px black",
           }}
         >
           {disclaimer}
@@ -495,7 +495,7 @@ const ScoreboardSidebar: React.FC<{ activeRank: number; segments: RankingSegment
         top: height * 0.235,
         display: "flex",
         flexDirection: "column",
-        gap: height * 0.008,
+        gap: height * 0.006,
       }}
     >
       {RANKS_TOP_TO_BOTTOM.map((n) => {
@@ -505,10 +505,10 @@ const ScoreboardSidebar: React.FC<{ activeRank: number; segments: RankingSegment
         const isRevealed = n >= activeRank;
         const segment = byRank.get(n);
 
-        let color = "rgba(255, 255, 255, 0.3)"; // upcoming
+        let color = "rgba(255, 255, 255, 0.65)"; // upcoming
         let glow = "none";
         if (isCompleted) {
-          color = "#4a4a4a";
+          color = "#a8a8a8";
         } else if (isFinal) {
           color = "#FFD700";
           glow = "0 0 26px #FFD700, 0 0 52px #FFD700";
@@ -522,28 +522,33 @@ const ScoreboardSidebar: React.FC<{ activeRank: number; segments: RankingSegment
             <span
               style={{
                 fontFamily: rankFontFamily,
-                fontSize: width * 0.065,
+                fontSize: width * 0.074,
                 color,
-                WebkitTextStroke: "2.5px black",
+                WebkitTextStroke: "3px black",
                 textShadow: glow,
                 textDecoration: isCompleted ? "line-through" : "none",
                 lineHeight: 1.1,
                 flexShrink: 0,
-                minWidth: width * 0.09,
+                minWidth: width * 0.1,
               }}
             >
               {n}
             </span>
             {isRevealed && segment && (
-              <div style={{ minWidth: 0 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                {/* One line, cut off with "…" — a wrapped title would push
+                    the rows past the halfway seam into the gameplay. */}
                 <div
                   style={{
                     fontFamily: bodyFontFamily,
-                    fontWeight: 700,
-                    fontSize: width * 0.03,
-                    color: isCompleted ? "#9a9a9a" : "white",
-                    textShadow: "0 2px 6px rgba(0,0,0,0.9)",
+                    fontWeight: 900,
+                    fontSize: width * 0.04,
+                    color: isCompleted ? "#e2e2e2" : "white",
+                    textShadow: "0 2px 4px black, 0 0 10px rgba(0,0,0,0.9)",
                     lineHeight: 1.15,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
                   {segment.songTitle}
@@ -552,9 +557,10 @@ const ScoreboardSidebar: React.FC<{ activeRank: number; segments: RankingSegment
                   <div
                     style={{
                       fontFamily: bodyFontFamily,
-                      fontWeight: 400,
-                      fontSize: width * 0.02,
-                      color: isCompleted ? "#777" : "#39FF14",
+                      fontWeight: 800,
+                      fontSize: width * 0.028,
+                      color: isCompleted ? "#c4c4c4" : "#39FF14",
+                      textShadow: "0 2px 4px black",
                       marginTop: 2,
                     }}
                   >
