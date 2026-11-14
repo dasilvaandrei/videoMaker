@@ -15,13 +15,26 @@ import { supabase } from "../lib/supabase.js";
 
 const EXCLUDED_TITLE_PATTERN = /\b(interview|reaction|live stream|livestream|shorts|behind the scenes)\b/i;
 const MIN_DURATION_SECONDS = 60; // filters out YouTube Shorts
+// Full-album and full-concert uploads (e.g. Pink Floyd's "The Dark Side Of
+// The Moon (50th Anniversary)", ~43 min) aren't songs. 25 minutes still
+// lets genuinely long songs through (Pink Floyd's "Echoes" is ~23 min).
+const MAX_DURATION_SECONDS = 25 * 60;
+// Scans this many of the channel's most recent uploads. Was 50, then
+// 1000 — still too few for prolific channels: @pinkfloyd has ~1,350
+// uploads, and 9 of its 10 most-viewed videos were older than the newest
+// 1000. Costs ~2 quota units per 50 uploads.
+const MAX_UPLOADS_SCANNED = 5000;
 
 function todayLabel(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 // See fetch-lastfm-rankings.ts's onlyArtistNames for why this exists.
-export async function fetchYoutubeRankings(onlyArtistNames?: string[]) {
+// Returns how many rankings were queued — 0 when an artist has no official
+// channel or too few eligible videos, so the caller can fall back to
+// Last.fm.
+export async function fetchYoutubeRankings(onlyArtistNames?: string[]): Promise<number> {
+  let queued = 0;
   const roster = loadArtistRoster().filter((a) => !onlyArtistNames || onlyArtistNames.includes(a.name));
   const periodLabel = todayLabel();
 
@@ -53,17 +66,15 @@ export async function fetchYoutubeRankings(onlyArtistNames?: string[]) {
       if (cacheError) throw cacheError;
     }
 
-    // Was capped at 50 (the channel's *most recent* uploads only), which
-    // silently excluded an artist's actual biggest hits once they aged out
-    // of that window — e.g. Calvin Harris's most-viewed videos ever
-    // ("Summer", "This Is What You Came For") are years old and never
-    // entered the top-5-by-views contest. 1000 comfortably covers a
-    // typical artist channel's full catalog while still bounding the
-    // videos.list cost for the rare channel with thousands of uploads.
-    const videoIds = await getChannelVideoIds(channelId, 1000);
+    const videoIds = await getChannelVideoIds(channelId, MAX_UPLOADS_SCANNED);
     const videos = await getVideosInfo(videoIds);
     const eligible = videos
-      .filter((v) => v.durationSeconds >= MIN_DURATION_SECONDS && !EXCLUDED_TITLE_PATTERN.test(v.title))
+      .filter(
+        (v) =>
+          v.durationSeconds >= MIN_DURATION_SECONDS &&
+          v.durationSeconds <= MAX_DURATION_SECONDS &&
+          !EXCLUDED_TITLE_PATTERN.test(v.title)
+      )
       .sort((a, b) => b.viewCount - a.viewCount);
     // A channel often uploads the same song multiple times (official
     // video, visualiser, official audio) — dedupe by normalized title so
@@ -116,7 +127,9 @@ export async function fetchYoutubeRankings(onlyArtistNames?: string[]) {
     }
 
     console.log(`${artistConfig.name}: queued YouTube ranking ${ranking.id} (${periodLabel})`);
+    queued++;
   }
+  return queued;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

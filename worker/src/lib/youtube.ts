@@ -50,14 +50,50 @@ export async function searchOfficialVideo(query: string): Promise<string | null>
   return body.items?.[0]?.id?.videoId ?? null;
 }
 
+// Lowercase, accents removed ("Sebastián" → "sebastian"), punctuation and
+// spaces dropped — but letters in other scripts kept, so a channel like
+// "韓国 JIN" doesn't collapse to "jin" and pass as the artist Jin.
+function normalizeName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+// Whether a channel's title or @handle is the artist's name, give or take
+// a few conventional extras ("SnoopDoggTV", "CalvinHarrisVEVO", "The
+// Burning Spear"). Looser "contains" matching picked wrong channels for
+// common or short names — "Duke Ellington School of the Arts", "Maurizio
+// Merluzzo", "Clan Giant Swan", "NotVendex".
+const NAME_PREFIXES = ["", "the", "official"];
+const NAME_SUFFIXES = ["", "vevo", "tv", "official", "music", "band"];
+function matchesArtist(channel: { title: string; handle: string }, artistName: string): boolean {
+  const artist = normalizeName(artistName).replace(/^the/, "");
+  if (!artist) return false;
+  const forms = new Set(NAME_PREFIXES.flatMap((p) => NAME_SUFFIXES.map((s) => `${p}${artist}${s}`)));
+  return forms.has(normalizeName(channel.title)) || forms.has(normalizeName(channel.handle));
+}
+
+// Near-empty impostor channels often copy an artist's exact name (several
+// titled "Snoop Dogg" with under 100 subscribers); a real artist channel
+// clears this easily.
+const MIN_CHANNEL_SUBSCRIBERS = 10_000;
+
 // For roster artists without a pre-verified youtubeChannelId (the roster
-// is now populated at a scale — see jobs/expand-artist-roster.ts — where
-// hand-verifying every channel isn't feasible). This is a best-effort
-// heuristic, same risk profile as searchOfficialVideo above: it can pick
-// a fan channel or a "- Topic" auto-generated channel instead of the
-// artist's real one. fetch-youtube-rankings.ts caches whatever it finds
-// into artists.youtube_channel_id so this only runs once per artist, not
-// once per day.
+// is too big to hand-verify every channel). fetch-youtube-rankings.ts
+// caches the result in artists.youtube_channel_id, so this runs once per
+// artist.
+//
+// Taking the first search result picked wrong channels: for "Pink Floyd"
+// it returned "PINK FLOYD - Topic" (YouTube's auto-generated art-track
+// channel, a fraction of the views), and a fan channel ranked second —
+// the real @pinkfloyd was 7th. So: skip "- Topic" channels (their uploads
+// can't be listed through the API anyway), keep channels whose name or
+// handle is the artist's (see matchesArtist) with real subscriber counts,
+// and take the biggest. Returns null when nothing qualifies — common for
+// older or underground artists with no official channel — rather than
+// guessing; the pipeline uses the Last.fm ranking for them instead.
 export async function searchOfficialChannel(artistName: string): Promise<string | null> {
   const url = new URL(`${DATA_API_BASE}/search`);
   url.search = new URLSearchParams({
@@ -65,13 +101,34 @@ export async function searchOfficialChannel(artistName: string): Promise<string 
     q: artistName,
     part: "snippet",
     type: "channel",
-    maxResults: "1",
+    maxResults: "10",
   }).toString();
 
   const res = await fetch(url);
   const body = await res.json();
   if (!res.ok) throw new Error(`YouTube channel search failed for ${JSON.stringify(artistName)}: ${res.status} ${JSON.stringify(body)}`);
-  return body.items?.[0]?.snippet?.channelId ?? null;
+  const channelIds: string[] = (body.items ?? []).map((i: { snippet?: { channelId?: string } }) => i.snippet?.channelId).filter(Boolean);
+  if (channelIds.length === 0) return null;
+
+  const statsUrl = new URL(`${DATA_API_BASE}/channels`);
+  statsUrl.search = new URLSearchParams({ key: apiKey(), id: channelIds.join(","), part: "snippet,statistics" }).toString();
+  const statsRes = await fetch(statsUrl);
+  const statsBody = await statsRes.json();
+  if (!statsRes.ok) throw new Error(`YouTube channels.list failed for ${JSON.stringify(artistName)}: ${statsRes.status} ${JSON.stringify(statsBody)}`);
+
+  type Candidate = { id: string; title: string; handle: string; subscribers: number };
+  const candidates: Candidate[] = (statsBody.items ?? [])
+    .map((c: { id: string; snippet?: { title?: string; customUrl?: string }; statistics?: { subscriberCount?: string } }) => ({
+      id: c.id,
+      title: c.snippet?.title ?? "",
+      handle: c.snippet?.customUrl ?? "",
+      subscribers: Number(c.statistics?.subscriberCount ?? 0),
+    }))
+    .filter((c: Candidate) => !/ - Topic$/i.test(c.title))
+    .sort((a: Candidate, b: Candidate) => b.subscribers - a.subscribers);
+
+  const match = candidates.find((c) => c.subscribers >= MIN_CHANNEL_SUBSCRIBERS && matchesArtist(c, artistName));
+  return match?.id ?? null;
 }
 
 // The artist's channel profile photo — used as the intro's split-screen

@@ -201,15 +201,23 @@ export async function runDailyPipeline() {
     const artistIndex = Math.floor(pairIndex / 2);
     const wantsYoutube = pairIndex % 2 === 1;
     const artist = roster[artistIndex];
-    // Falls back to lastfm for an artist without a resolved YouTube
-    // channel rather than skipping the day entirely — fetch-youtube-
-    // rankings.ts will still try to resolve+cache one on its own turn.
     const source: "lastfm" | "youtube" = wantsYoutube ? "youtube" : "lastfm";
 
     console.log(`Today's pick: ${artist.name} (${source})`);
 
     if (source === "youtube") {
-      await fetchYoutubeRankings([artist.name]);
+      const queued = await fetchYoutubeRankings([artist.name]);
+      if (queued === 0) {
+        // No official channel (common for older or underground artists) or
+        // too few eligible videos. Falling back to this same artist's
+        // Last.fm ranking would do nothing: its Last.fm turn ran in the
+        // previous 6h slot, always the same UTC day, so that ranking (and
+        // its video) already exists. Use an artist half the roster away
+        // instead — their own turns are far off, so no collision.
+        const fallback = roster[(artistIndex + Math.floor(roster.length / 2)) % roster.length];
+        console.log(`${artist.name}: no usable YouTube channel — falling back to ${fallback.name} (lastfm)`);
+        await fetchLastfmRankings([fallback.name]);
+      }
     } else {
       await fetchLastfmRankings([artist.name]);
     }
