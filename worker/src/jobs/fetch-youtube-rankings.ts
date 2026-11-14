@@ -1,7 +1,8 @@
-// Once per day: ranks each roster artist's official YouTube uploads by
-// view count and turns the top 5 into a rankings row. Since the source
-// *is* YouTube, each song's youtube_video_id is already known — no
-// separate clip-resolution search needed for this source.
+// Ranks an artist's official YouTube videos by view count and turns the
+// top 5 into a rankings row. "Official" means the artist's own channel
+// plus their videos on known label channels (see the candidate step
+// below). Since the source *is* YouTube, each song's youtube_video_id is
+// already known — no separate clip-resolution search needed.
 //
 // Known limitation: this ranks *uploads*, not "songs" specifically — a
 // channel's interview/live-stream/Shorts uploads can outrank an actual
@@ -9,9 +10,18 @@
 // non-song content keeps showing up in generated rankings.
 
 import { loadArtistRoster } from "../config/artists.js";
-import { getChannelVideoIds, getVideosInfo, searchOfficialChannel } from "../lib/youtube.js";
+import {
+  getChannelVideoIds,
+  getVideosInfo,
+  searchMostViewedVideos,
+  searchOfficialChannel,
+  titleCreditsArtist,
+} from "../lib/youtube.js";
 import { dedupeByNormalizedTitle } from "../lib/songTitle.js";
 import { supabase } from "../lib/supabase.js";
+import { OFFICIAL_LABEL_CHANNELS } from "../config/officialLabelChannels.js";
+
+const LABEL_CHANNEL_IDS = new Set(OFFICIAL_LABEL_CHANNELS.map((c) => c.id));
 
 const EXCLUDED_TITLE_PATTERN = /\b(interview|reaction|live stream|livestream|shorts|behind the scenes)\b/i;
 const MIN_DURATION_SECONDS = 60; // filters out YouTube Shorts
@@ -55,19 +65,40 @@ export async function fetchYoutubeRankings(onlyArtistNames?: string[]): Promise<
       // pre-verified channel — resolve it live and cache the result so
       // this search only ever runs once per artist, not once per day.
       channelId = await searchOfficialChannel(artistConfig.name);
-      if (!channelId) {
-        console.warn(`${artistConfig.name}: no YouTube channel found, skipping`);
-        continue;
+      if (channelId) {
+        const { error: cacheError } = await supabase
+          .from("artists")
+          .update({ youtube_channel_id: channelId })
+          .eq("id", artist.id);
+        if (cacheError) throw cacheError;
       }
-      const { error: cacheError } = await supabase
-        .from("artists")
-        .update({ youtube_channel_id: channelId })
-        .eq("id", artist.id);
-      if (cacheError) throw cacheError;
     }
 
-    const videoIds = await getChannelVideoIds(channelId, MAX_UPLOADS_SCANNED);
-    const videos = await getVideosInfo(videoIds);
+    // Candidates: the artist's own uploads, plus their videos on official
+    // label channels (config/officialLabelChannels.ts) — many artists'
+    // biggest MVs live there, e.g. Jin's on HYBE LABELS. A label video must
+    // be credited to the artist in its title (see titleCreditsArtist),
+    // since labels upload many artists. Videos from any other channel (fan
+    // re-uploads, lyric channels) are ignored. With no channel of their
+    // own, label videos alone can still make a ranking.
+    const candidateIds = new Set<string>(channelId ? await getChannelVideoIds(channelId, MAX_UPLOADS_SCANNED) : []);
+    try {
+      for (const hit of await searchMostViewedVideos(artistConfig.name)) {
+        if (LABEL_CHANNEL_IDS.has(hit.channelId) && titleCreditsArtist(hit.title, artistConfig.name)) {
+          candidateIds.add(hit.videoId);
+        }
+      }
+    } catch (err) {
+      // YouTube caps searches at 100/day per project, separately from the
+      // unit quota. Rank from the artist's own channel rather than fail.
+      console.warn(`${artistConfig.name}: label-channel search failed, using own channel only:`, err instanceof Error ? err.message : err);
+    }
+    if (candidateIds.size === 0) {
+      console.warn(`${artistConfig.name}: no official channel or label videos found, skipping`);
+      continue;
+    }
+
+    const videos = await getVideosInfo([...candidateIds]);
     const eligible = videos
       .filter(
         (v) =>

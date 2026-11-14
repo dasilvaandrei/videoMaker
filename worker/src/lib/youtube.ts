@@ -50,6 +50,64 @@ export async function searchOfficialVideo(query: string): Promise<string | null>
   return body.items?.[0]?.id?.videoId ?? null;
 }
 
+// The most-viewed videos YouTube returns for a search, across all channels
+// (search.list costs 100 quota units per call). fetch-youtube-rankings.ts
+// uses this to find an artist's videos on official label channels.
+export async function searchMostViewedVideos(
+  query: string,
+  maxResults = 50
+): Promise<{ videoId: string; channelId: string; title: string }[]> {
+  const url = new URL(`${DATA_API_BASE}/search`);
+  url.search = new URLSearchParams({
+    key: apiKey(),
+    q: query,
+    part: "snippet",
+    type: "video",
+    order: "viewCount",
+    maxResults: String(maxResults),
+  }).toString();
+
+  const res = await fetch(url);
+  const body = await res.json();
+  if (!res.ok) throw new Error(`YouTube video search failed for ${JSON.stringify(query)}: ${res.status} ${JSON.stringify(body)}`);
+  return (body.items ?? [])
+    .map((i: { id?: { videoId?: string }; snippet?: { channelId?: string; title?: string } }) => ({
+      videoId: i.id?.videoId ?? "",
+      channelId: i.snippet?.channelId ?? "",
+      title: i.snippet?.title ?? "",
+    }))
+    .filter((v: { videoId: string }) => v.videoId);
+}
+
+// Lowercase, accents removed, everything that isn't a letter or digit
+// turned into single spaces, padded with spaces — for whole-word matching.
+function toWords(text: string): string {
+  const words = text
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  return ` ${words} `;
+}
+
+// Whether a video's title credits it to the artist — label channels upload
+// many artists, so this is what ties a label video to one. Credited means
+// the artist's name opens the title ("Juice WRLD - Lucid Dreams", "BTS
+// (방탄소년단) 'Dynamite'", after any leading "[MV]"-style tag), or is the
+// first bracketed name ("진 (Jin) 'The Astronaut' Official MV"). Merely
+// containing the name isn't enough: "LEE MU JIN(이무진)" is a different
+// singer, and "Cordae ft. Juice WRLD" is only a feature — consistent with
+// the videos' "Primary artist credit only" note.
+export function titleCreditsArtist(title: string, artistName: string): boolean {
+  const artist = toWords(artistName).trim();
+  if (!artist) return false;
+  const withoutTags = title.replace(/^\s*(\[[^\]]*\]\s*)+/, "");
+  if (toWords(withoutTags).startsWith(` ${artist} `)) return true;
+  const firstBracketed = /^[^'"‘“(]*\(([^)]*)\)/.exec(withoutTags)?.[1];
+  return firstBracketed !== undefined && toWords(firstBracketed).trim() === artist;
+}
+
 // Lowercase, accents removed ("Sebastián" → "sebastian"), punctuation and
 // spaces dropped — but letters in other scripts kept, so a channel like
 // "韓国 JIN" doesn't collapse to "jin" and pass as the artist Jin.
