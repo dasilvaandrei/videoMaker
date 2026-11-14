@@ -22,6 +22,7 @@
 //      uploading right now hasn't written its path to the DB yet.
 
 import { supabase } from "../lib/supabase.js";
+import { GAMEPLAY_LOOPS } from "../config/gameplayLoops.js";
 import {
   fetchAllRows,
   findActiveRankingIds,
@@ -34,6 +35,7 @@ const DELETE_BATCH_SIZE = 100;
 const LIST_PAGE_SIZE = 1000;
 const ORPHAN_MIN_AGE_HOURS = 6;
 const SWEPT_FOLDERS = ["renders", "song-clips"];
+const STORAGE_ALERT_MB = 800;
 
 interface VideoRow {
   id: string;
@@ -59,19 +61,47 @@ async function deleteStoragePaths(paths: string[]): Promise<Set<string>> {
   return deleted;
 }
 
-async function listFolder(folder: string): Promise<{ path: string; createdAt: string | null }[]> {
-  const files: { path: string; createdAt: string | null }[] = [];
+interface StoredFile {
+  path: string;
+  createdAt: string | null;
+  bytes: number;
+}
+
+// Lists one level: files directly under `folder`, plus subfolder names
+// (Storage returns those with a null id). "" lists the bucket root.
+async function listLevel(folder: string): Promise<{ files: StoredFile[]; subfolders: string[] }> {
+  const files: StoredFile[] = [];
+  const subfolders: string[] = [];
+  const prefix = folder ? `${folder}/` : "";
   for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
     const { data, error } = await supabase.storage
       .from(MEDIA_BUCKET)
       .list(folder, { limit: LIST_PAGE_SIZE, offset, sortBy: { column: "name", order: "asc" } });
-    if (error) throw new Error(`storage list failed for ${folder}/: ${error.message}`);
+    if (error) throw new Error(`storage list failed for ${prefix || "bucket root"}: ${error.message}`);
     for (const item of data ?? []) {
-      // Folders come back with a null id; only files have one.
-      if (item.id) files.push({ path: `${folder}/${item.name}`, createdAt: item.created_at ?? null });
+      if (item.id) {
+        files.push({
+          path: `${prefix}${item.name}`,
+          createdAt: item.created_at ?? null,
+          bytes: Number((item.metadata as { size?: number } | null)?.size ?? 0),
+        });
+      } else {
+        subfolders.push(`${prefix}${item.name}`);
+      }
     }
-    if (!data || data.length < LIST_PAGE_SIZE) return files;
+    if (!data || data.length < LIST_PAGE_SIZE) return { files, subfolders };
   }
+}
+
+async function listFolder(folder: string): Promise<StoredFile[]> {
+  return (await listLevel(folder)).files;
+}
+
+async function totalStorageBytes(folder = ""): Promise<number> {
+  const { files, subfolders } = await listLevel(folder);
+  let total = files.reduce((sum, f) => sum + f.bytes, 0);
+  for (const sub of subfolders) total += await totalStorageBytes(sub);
+  return total;
 }
 
 async function fetchVideos(): Promise<VideoRow[]> {
@@ -143,10 +173,27 @@ export async function cleanupPublishedStorage() {
   }
   const deletedOrphans = await deleteStoragePaths(orphanPaths);
 
+  // Pass 4: gameplay loops no longer in config/gameplayLoops.ts (retired or
+  // replaced styles). Nothing else reads bg-loops/.
+  const currentLoops = new Set(GAMEPLAY_LOOPS.map((l) => l.path));
+  const retiredLoops = (await listFolder("bg-loops")).map((f) => f.path).filter((p) => !currentLoops.has(p));
+  const deletedLoops = await deleteStoragePaths(retiredLoops);
+
   console.log(
     `Storage cleanup: deleted ${deletedRenders.size} render file(s) from ${postedVideos.length} posted video(s), ` +
-      `${deletedClips.size} song clip(s), ${deletedOrphans.size} orphaned file(s).`
+      `${deletedClips.size} song clip(s), ${deletedOrphans.size} orphaned file(s), ${deletedLoops.size} retired gameplay loop(s).`
   );
+
+  // Fail loudly (GitHub emails on a failed run) well before the free plan's
+  // 1 GB storage limit — going over it is what locked the project in
+  // Sept-Nov 2026. Everything above should keep this near ~200 MB.
+  const totalMb = (await totalStorageBytes()) / 1048576;
+  console.log(`Storage in use: ${totalMb.toFixed(1)} MB (alert at ${STORAGE_ALERT_MB} MB, free plan limit 1024 MB)`);
+  if (totalMb > STORAGE_ALERT_MB) {
+    throw new Error(
+      `Storage is at ${totalMb.toFixed(0)} MB, past the ${STORAGE_ALERT_MB} MB alert line — close to the free plan's 1 GB limit. Check what's accumulating.`
+    );
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

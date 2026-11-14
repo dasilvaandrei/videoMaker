@@ -27,6 +27,11 @@ export const GAMEPLAY_LOOPS: { path: string; videoId: string; startSeconds: numb
   { path: "bg-loops/gta5-stunt-jumps.mp4", videoId: "DzbgcE2c7BU", startSeconds: 300 },
   // "Gta 5 Stunt Race Free To Use Gameplay No Copyright" — Fox - No Copyright Gameplay
   { path: "bg-loops/gta5-stunt-race.mp4", videoId: "ARdwpNTe058", startSeconds: 600 },
-  // "Gta 5 Los Santos RED Free To Use Gameplay No Copyright" — Fox - No Copyright Gameplay
-  { path: "bg-loops/gta5-city-driving.mp4", videoId: "DvIr0la3XcU", startSeconds: 600 },
+  // "GTA 5 DRIFTING Gameplay ▸ No Copyright GTA Gameplay" — Dope Gameplays
+  { path: "bg-loops/gta5-drifting.mp4", videoId: "AHeyo9D9Tyk", startSeconds: 150 },
+  // "GTA 5 CRAZY BIKE PARKOUR GAMEPLAY | No Copyright Gameplay" — Dope Gameplays
+  { path: "bg-loops/gta5-bike-parkour.mp4", videoId: "tzXbmpPpCRk", startSeconds: 150 },
 ];
+// Check a window by eye before adding it: a "free roam" source tried here
+// (DvIr0la3XcU) turned out to be mostly menus and map screens at the
+// chosen timestamp, which compresses suspiciously small — a useful tell.
