@@ -1,13 +1,13 @@
-// Single entry point for the cron, which now fires 4x/day (see
+// Single entry point for the cron, which now fires 8x/day (see
 // daily-pipeline.yml). Each run:
 //   1. Sync the personal-picks Google Form, then check for a submission
 //      that's never been published yet — if one exists, that's this
 //      run's video (personal picks take priority over the automated
 //      rotation).
 //   2. Otherwise, deterministically pick one (artist, source) pair from
-//      the roster based on the current 6-hour period — see
+//      the roster based on the current 3-hour period — see
 //      rotationPeriodsSinceEpoch() below. One pair per period (not per
-//      day) so each of the 4 daily runs renders a genuinely new video
+//      day) so each daily run renders a genuinely new video
 //      instead of the 2nd-4th run of the day finding nothing new queued
 //      and just draining the publish backlog (which would eventually
 //      run dry and start failing the "zero published" check below).
@@ -43,12 +43,86 @@ import { publishToTiktokInbox } from "./publish-tiktok-inbox.js";
 import { cleanupPublishedStorage } from "./cleanup-published-storage.js";
 import { supabase } from "../lib/supabase.js";
 
-// 6 hours, matching daily-pipeline.yml's 4x/day cron spacing — one
-// rotation step per scheduled run, not per calendar day.
-const ROTATION_PERIOD_MS = 6 * 60 * 60 * 1000;
+// 3 hours, matching daily-pipeline.yml's 8x/day cron spacing — one
+// rotation step per scheduled run, not per calendar day. GitHub often
+// starts scheduled runs hours late, so two runs can land in the same
+// period; pickRotationPair() steps past a pair that already ran today.
+const ROTATION_PERIOD_MS = 3 * 60 * 60 * 1000;
+
+// Each YouTube upload costs 1,600 of the API's 10,000 daily quota units,
+// so 6 is the most that fits alongside each run's other calls. The
+// workflow is scheduled 8x/day because GitHub routinely skips scheduled
+// runs; once this many have gone out in the last 24 hours, the remaining
+// runs exit without doing anything.
+const MAX_UPLOADS_PER_DAY = 6;
 
 function rotationPeriodsSinceEpoch(): number {
   return Math.floor(Date.now() / ROTATION_PERIOD_MS);
+}
+
+async function countYoutubeUploadsLast24h(): Promise<number> {
+  const { data: platform, error: platformError } = await supabase
+    .from("platforms")
+    .select("id")
+    .eq("name", "youtube")
+    .single();
+  if (platformError) throw platformError;
+
+  const { data: accounts, error: accountsError } = await supabase
+    .from("platform_accounts")
+    .select("id")
+    .eq("platform_id", platform.id);
+  if (accountsError) throw accountsError;
+  const accountIds = (accounts ?? []).map((a) => a.id as string);
+  if (accountIds.length === 0) return 0;
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count, error } = await supabase
+    .from("posts")
+    .select("id", { count: "exact", head: true })
+    .in("platform_account_id", accountIds)
+    .eq("status", "published")
+    .gte("published_at", since);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+async function rankingExistsToday(artistName: string, source: "lastfm" | "youtube"): Promise<boolean> {
+  const { data: artist, error: artistError } = await supabase
+    .from("artists")
+    .select("id")
+    .eq("name", artistName)
+    .maybeSingle();
+  if (artistError) throw artistError;
+  if (!artist) return false;
+
+  const { data: ranking, error } = await supabase
+    .from("rankings")
+    .select("id")
+    .eq("artist_id", artist.id)
+    .eq("source", source)
+    .eq("period_label", new Date().toISOString().slice(0, 10))
+    .maybeSingle();
+  if (error) throw error;
+  return ranking !== null;
+}
+
+// The rotation pair for this period, or the next one that hasn't already
+// run today (when a delayed run and an on-time run share a period).
+async function pickRotationPair<T extends { name: string }>(
+  roster: T[]
+): Promise<{ artistIndex: number; artist: T; source: "lastfm" | "youtube" }> {
+  const base = rotationPeriodsSinceEpoch();
+  for (let step = 0; ; step++) {
+    const pairIndex = (base + step) % (roster.length * 2);
+    const artistIndex = Math.floor(pairIndex / 2);
+    const source = pairIndex % 2 === 1 ? "youtube" : "lastfm";
+    const artist = roster[artistIndex];
+    if (step >= 10 || !(await rankingExistsToday(artist.name, source))) {
+      return { artistIndex, artist, source };
+    }
+    console.log(`${artist.name} (${source}) already ran today — trying the next pick`);
+  }
 }
 
 // artists.json is built genre-tag by genre-tag (see
@@ -186,6 +260,12 @@ async function autoApproveReadyVideos(): Promise<void> {
 }
 
 export async function runDailyPipeline() {
+  const uploadsToday = await countYoutubeUploadsLast24h();
+  if (uploadsToday >= MAX_UPLOADS_PER_DAY) {
+    console.log(`${uploadsToday} YouTube uploads in the last 24h (cap ${MAX_UPLOADS_PER_DAY}) — skipping this run.`);
+    return;
+  }
+
   // Personal picks take priority: sync whatever's in the form/sheet, then
   // see if any submission has never actually been published yet.
   await syncPersonalRankings();
@@ -197,11 +277,7 @@ export async function runDailyPipeline() {
     const roster = seededShuffle(loadArtistRoster(), 0x5eed);
     if (roster.length === 0) throw new Error("artists.json is empty — add at least one artist");
 
-    const pairIndex = rotationPeriodsSinceEpoch() % (roster.length * 2);
-    const artistIndex = Math.floor(pairIndex / 2);
-    const wantsYoutube = pairIndex % 2 === 1;
-    const artist = roster[artistIndex];
-    const source: "lastfm" | "youtube" = wantsYoutube ? "youtube" : "lastfm";
+    const { artistIndex, artist, source } = await pickRotationPair(roster);
 
     console.log(`Today's pick: ${artist.name} (${source})`);
 
@@ -211,7 +287,7 @@ export async function runDailyPipeline() {
         // No official channel (common for older or underground artists) or
         // too few eligible videos. Falling back to this same artist's
         // Last.fm ranking would do nothing: its Last.fm turn ran in the
-        // previous 6h slot, always the same UTC day, so that ranking (and
+        // previous slot, almost always the same UTC day, so that ranking (and
         // its video) already exists. Use an artist half the roster away
         // instead — their own turns are far off, so no collision.
         const fallback = roster[(artistIndex + Math.floor(roster.length / 2)) % roster.length];
